@@ -2,10 +2,10 @@
 
 A comprehensive toolkit for analyzing brain asymmetry patterns from FreeSurfer ASL (Arterial Spin Labeling) perfusion data. This project provides sophisticated methods for quantifying hemispheric differences in brain perfusion and visualizing laterality patterns.
 
-## 🧠 Features
+## Features
 
 ### Core Analysis Methods
-- **15 sophisticated asymmetry calculation methods** including:
+- **15 asymmetry calculation methods** including:
   - Traditional Laterality Index (LI)
   - Volume-weighted asymmetries
   - Statistical-based indices (Cohen's d, effect sizes)
@@ -40,7 +40,7 @@ pip install -r requirements.txt
 
 ### Essential Analysis Pipeline
 ```bash
-# 1. Run comprehensive asymmetry analysis (16 methods)
+# 1. Run asymmetry analysis (16 methods)
 python targeted_p013_analysis.py
 
 # 2. Create spatial NIfTI maps for brain visualization
@@ -52,17 +52,17 @@ python demo_li_visualization.py
 
 ## 📊 Project Features
 
-### Advanced Asymmetry Methods (16 total)
+### Asymmetry Methods (16 total)
 - **Basic Methods**: Laterality Index, Asymmetry Index, Percentage Difference, Normalized Asymmetry, Log Ratio
 - **Statistical Methods**: Cohen's d, Volume-Corrected, Robust, Fold-Change, Z-score based
 - **Sophisticated Methods**: Entropy Difference, Mahalanobis Distance, Skewness/Kurtosis Differences, IQR-based
 
 ### Key Capabilities
-- ✅ **SegID-Based Ordering**: Maintains FreeSurfer parcellation sequence from list.txt
-- ✅ **Statistical Significance**: Multiple thresholds (|LI| > 0.1, 0.2, 0.3)
-- ✅ **Spatial Visualization**: NIfTI maps for FSLeyes, MRIcroGL, AFNI
-- ✅ **Publication Ready**: Statistical reports and visualization guides
-- ✅ **Quality Control**: Comprehensive validation and error checking
+-  **SegID-Based Ordering**: Maintains FreeSurfer parcellation sequence from list.txt
+-  **Statistical Significance**: Multiple thresholds (|LI| > 0.1, 0.2, 0.3)
+-  **Spatial Visualization**: NIfTI maps for FSLeyes, MRIcroGL, AFNI
+-  **Publication Ready**: Statistical reports and visualization guides
+-  **Quality Control**: Comprehensive validation and error checking
 
 ## 📁 Project Structure
 
@@ -93,7 +93,7 @@ LATERALITY_VISUALIZATION_GUIDE.md # Detailed visualization instructions
 QUICK_LI_REFERENCE.md           # Essential commands reference
 ```
 
-## 🎯 Usage Examples
+## 📖 Usage Examples
 
 ### Basic Analysis
 ```python
@@ -132,7 +132,7 @@ fsleyes Dataset/P013/T1w_acpc_dc_restore.nii.gz \
 4. **ctx-rh-temporalpole** (LI: 0.168) - Moderate right dominance
 5. **Left-Putamen** (LI: -0.140) - Mild left dominance
 
-## 🔬 Technical Details
+## Technical Details
 
 ### Statistical Thresholds
 - **Mild Asymmetry**: |LI| > 0.05
@@ -159,5 +159,3 @@ fsleyes Dataset/P013/T1w_acpc_dc_restore.nii.gz \
 - **`targeted_p013_analysis.py`** - Complete analysis with documentation
 
 ---
-
-*This pipeline provides state-of-the-art asymmetry analysis for neuroimaging research and clinical applications.*
