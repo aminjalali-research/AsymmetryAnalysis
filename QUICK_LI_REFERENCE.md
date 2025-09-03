@@ -1,6 +1,6 @@
-# 🚀 **Quick Reference: LI Map Visualization**
+#  **Quick Reference: LI Map Visualization**
 
-## ⚡ **Essential Commands**
+##  **Essential Commands**
 
 ### **Basic Viewing (FSLeyes)**
 ```bash
@@ -26,7 +26,7 @@ fsleyes Dataset/P013/T1w_acpc_dc_restore.nii.gz \
 
 ---
 
-## 🎨 **Color Interpretation**
+##  **Color Interpretation**
 
 | Color | Meaning | Clinical Significance |
 |-------|---------|---------------------|
@@ -37,7 +37,7 @@ fsleyes Dataset/P013/T1w_acpc_dc_restore.nii.gz \
 
 ---
 
-## 📊 **P013 Key Findings**
+##  **P013 Key Findings**
 
 - **9/37 regions** significantly asymmetric (|LI| > 0.1)
 - **26.4%** of brain voxels show asymmetry  
@@ -46,7 +46,7 @@ fsleyes Dataset/P013/T1w_acpc_dc_restore.nii.gz \
 
 ---
 
-## 🔧 **Troubleshooting**
+##  **Troubleshooting**
 
 | Problem | Solution |
 |---------|----------|
@@ -59,15 +59,15 @@ fsleyes Dataset/P013/T1w_acpc_dc_restore.nii.gz \
 
 ## 📁 **Generated Files**
 
-✅ `P013_laterality_index_map.nii.gz` - Main visualization  
-✅ `P013_significant_asymmetry_mask.nii.gz` - |LI| > 0.1  
-✅ `P013_left_dominant_regions.nii.gz` - LI > 0.1  
-✅ `P013_right_dominant_regions.nii.gz` - LI < -0.1  
-✅ `P013_LI_histogram.png` - Statistical distribution  
+ `P013_laterality_index_map.nii.gz` - Main visualization  
+ `P013_significant_asymmetry_mask.nii.gz` - |LI| > 0.1  
+ `P013_left_dominant_regions.nii.gz` - LI > 0.1  
+ `P013_right_dominant_regions.nii.gz` - LI < -0.1  
+ `P013_LI_histogram.png` - Statistical distribution  
 
 ---
 
-## 🎯 **Clinical Thresholds**
+##  **Clinical Thresholds**
 
 - **|LI| > 0.4**: Strong (investigate artifacts)
 - **|LI| > 0.2**: Moderate (clinically significant) 
