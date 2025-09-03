@@ -1,6 +1,6 @@
-# 🧠 **Comprehensive Guide: Laterality Index NIfTI Map Visualization**
+#  **Comprehensive Guide: Laterality Index NIfTI Map Visualization**
 
-## 🎯 **Overview**
+##  **Overview**
 
 This guide provides complete instructions for visualizing and interpreting laterality index (LI) maps created from FreeSurfer parcellations and perfusion data. The LI maps show spatial patterns of brain asymmetry where each voxel's intensity represents the laterality index of its corresponding brain region.
 
@@ -22,7 +22,7 @@ This guide provides complete instructions for visualizing and interpreting later
 
 ---
 
-## 🎨 **Visualization Software Options**
+##  **Visualization Software Options**
 
 ### **1. FSLeyes (Recommended - Most User-Friendly)**
 
@@ -152,7 +152,7 @@ print(f"Left dominant: {left_bias}, Right dominant: {right_bias}")
 
 ---
 
-## 🎯 **Clinical Applications**
+##  **Clinical Applications**
 
 ### **1. Perfusion Asymmetry Assessment**
 - **Use**: `P013_laterality_index_map.nii.gz` with threshold ±0.1
@@ -350,7 +350,7 @@ fsleyes --screenshot figure.png 300 [previous fsleyes command]
 
 ---
 
-## 🎯 **Best Practices Summary**
+##  **Best Practices Summary**
 
 ### **✅ DO:**
 - Always overlay on anatomical T1w image
@@ -379,7 +379,7 @@ fsleyes --screenshot figure.png 300 [previous fsleyes command]
 
 ---
 
-## 🏆 **Conclusion**
+##  **Conclusion**
 
 This comprehensive guide provides everything needed to visualize, interpret, and analyze laterality index maps from FreeSurfer perfusion data. The generated NIfTI files enable spatial visualization of brain asymmetries, supporting both clinical assessment and research applications.
 
