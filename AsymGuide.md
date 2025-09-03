@@ -90,7 +90,7 @@ demo_li_visualization.py          # Visualization demo
 
 ---
 
-## 🔬 Analysis Methods
+##  Analysis Methods
 
 ### 15 Asymmetry Calculation Methods (Refined Suite)
 
@@ -123,19 +123,6 @@ demo_li_visualization.py          # Visualization demo
 - **Extreme Asymmetry**: |LI| > 0.3
 
 ---
-
-## 📂 File Structure
-
-### Input Files
-```
-AsymmetryAnalysis/
-├── Dataset/P013/
-│   ├── T1w_acpc_dc_restore.nii.gz
-│   ├── aparc+aseg.nii.gz
-│   └── P013_segstats_perfusion.txt
-├── list.txt
-└── [analysis scripts]
-```
 
 ### Outputs
 
@@ -226,7 +213,7 @@ python demo_li_visualization.py
 
 ---
 
-## 🎨 Visualization Guide
+##  Visualization Guide
 
 ### Enhanced Asymmetry Visualizations
 
@@ -342,7 +329,7 @@ afni -dset Dataset/P013/T1w_acpc_dc_restore.nii.gz \
 
 ---
 
-## 🔧 Troubleshooting
+##  Troubleshooting
 
 ### Common Issues
 
@@ -437,7 +424,7 @@ done
 
 ---
 
-## 🔬 Advanced Features
+##  Advanced Features
 
 ### Custom Thresholds
 Modify thresholds in analysis scripts:
@@ -489,7 +476,7 @@ Generate high-quality figures:
 
 ---
 
-## 🆘 Support and Resources
+## Resources
 
 ### Documentation Files
 - `LATERALITY_VISUALIZATION_GUIDE.md` - Detailed visualization instructions
