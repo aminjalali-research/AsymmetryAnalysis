@@ -1,50 +1,6 @@
-# 🧠 Comprehensive Asymmetry Analysis Guide
+# Comprehensive Asymmetry Analysis Guide
 
-*Complete reference for FreeSurfer ASL perfusion data asymmetry analysis*
-
----
-
-## 📋 Table of Contents
-
-1. [File Management Instructions](#file-management-instructions)
-2. [Quick Start](#quick-start)
-3. [Project Overview](#project-overview)
-4. [Data Requirements](#data-requirements)
-5. [Analysis Methods](#analysis-methods)
-6. [File Structure](#file-structure)
-7. [Step-by-Step Workflow](#step-by-step-workflow)
-8. [Visualization Guide](#visualization-guide)
-9. [Interpretation Guidelines](#interpretation-guidelines)
-10. [Troubleshooting](#troubleshooting)
-11. [Reference Commands](#reference-commands)
-
----
-
-## 📂 File Management Instructions
-
-### Default Behavior
-**Always update existing files instead of creating new ones.**
-
-### Code and Document Management
-When working with code or documents:
-
-- **Modify and improve existing files** rather than creating new versions
-- **Only create a new file** if the changes would be so extensive that they could break existing functionality or make the previous code incompatible
-- **If you must create a new file** due to dramatic changes, clearly explain why the existing file cannot be safely updated
-
-### Exception Criteria for New File Creation
-
-✅ **Create new file only when:**
-- Complete architectural changes that would render existing code non-functional
-- Switching to entirely different frameworks, languages, or paradigms
-- Changes that would require extensive refactoring of dependent files
-
-### Best Practice Approach
-**Always prefer:** Incremental updates, additions, and improvements to existing files.
-
----symmetry Analysis Guide
-
-*Complete reference for FreeSurfer ASL perfusion data asymmetry analysis*
+*Reference for FreeSurfer ASL perfusion data asymmetry analysis*
 
 ---
 
@@ -98,16 +54,14 @@ fsleyes Dataset/P013/T1w_acpc_dc_restore.nii.gz \
 ## 📊 Project Overview
 
 ### Purpose
-Advanced asymmetry analysis for FreeSurfer parcellated ASL perfusion data using sophisticated statistical methods beyond simple left-right ratios.
+Advanced asymmetry analysis for FreeSurfer parcellated ASL perfusion data using statistical methods beyond simple left-right ratios.
 
 ### Key Features
-- **15 Advanced Asymmetry Methods**: Including Cohen's d, volume-corrected, robust statistical measures (refined from 16, removed redundant method)
+- **15 Advanced Asymmetry Methods**: Including Cohen's d, volume-corrected, robust statistical measures
 - **SegID-Based Ordering**: Maintains original FreeSurfer parcellation sequence
 - **Enhanced Visualizations**: Multi-method heatmaps with consistent RdBu colormap (Red=Right>Left, Blue=Left>Right)
 - **Spatial Visualization**: NIfTI maps for brain visualization in FSLeyes/MRIcroGL
 - **Statistical Significance Testing**: Multiple thresholds and quality control
-- **Publication-Ready Outputs**: Enhanced figures and statistical tables with clear laterality interpretation
-- **Consolidated Results**: Single P013_Analysis_Results folder containing all outputs
 
 ### Clinical Applications
 - Stroke asymmetry assessment
@@ -115,13 +69,6 @@ Advanced asymmetry analysis for FreeSurfer parcellated ASL perfusion data using 
 - Pre-surgical planning
 - Research on hemispheric specialization
 
-### Latest Enhancements (August 2025)
-- ✅ Removed redundant robust asymmetry method (identical to laterality index)
-- ✅ Enhanced focused heatmap with individual method displays
-- ✅ Consistent RdBu colormap across all methods for clear interpretation
-- ✅ Improved left/right laterality visualization with color-coded indicators
-
----
 
 ## 📁 Data Requirements
 
@@ -190,11 +137,11 @@ AsymmetryAnalysis/
 └── [analysis scripts]
 ```
 
-### Generated Outputs
+### Outputs
 
-#### Consolidated Analysis Results (NEW!)
+#### Analysis Results 
 ```
-P013_Analysis_Results/                          # Single consolidated folder
+P013_Analysis_Results/                         
 ├── P013_comprehensive_asymmetry_analysis.csv  # All 15 methods results
 ├── P013_significant_asymmetries.csv           # |LI| > 0.1 regions
 ├── analysis_summary.txt                       # Statistical summary
@@ -560,46 +507,3 @@ Generate high-quality figures:
 - [NIfTI Format Specification](https://nifti.nimh.nih.gov/)
 
 ---
-
-## 📝 Version History
-
-- **v1.0** (Current): Complete asymmetry analysis pipeline with 16 methods
-- **v0.5**: Basic 5-method calculator with simple visualization
-- **v0.1**: Initial concept and data structure
-
----
-
-## 📧 Quick Reference Card
-
-### Most Important Commands
-```bash
-# 1. Run analysis
-python targeted_p013_analysis.py
-
-# 2. Create maps  
-python create_laterality_map.py
-
-# 3. Visualize
-fsleyes Dataset/P013/T1w_acpc_dc_restore.nii.gz \
-  laterality_maps/P013_laterality_index_map.nii.gz \
-  -cm red-yellow -dr -0.4 0.4 -a 70 &
-```
-
-### Key Findings (P013 - Updated Analysis)
-- **9/37 bilateral regions** significantly asymmetric (|LI| > 0.1)
-- **15 sophisticated asymmetry methods** refined from 16 (removed redundant method)
-- **Strongest asymmetries**: entorhinal (-0.398), frontalpole (-0.332), parsorbitalis (-0.215)
-- **Predominantly right-dominant** asymmetries in this subject
-- **Mixed patterns**: Some left-dominant regions (amygdala, temporalpole, bankssts)
-- **Enhanced visualization** with consistent RdBu colormap for clear interpretation
-
-### Analysis Evolution (August 2025)
-- ✅ **Method Refinement**: From 16 to 15 methods (removed redundant robust asymmetry)
-- ✅ **Visual Enhancement**: New focused heatmap with individual method displays
-- ✅ **Consistent Colors**: RdBu colormap across all methods (Red=R>L, Blue=L>R)
-- ✅ **Consolidated Output**: Single P013_Analysis_Results folder
-- ✅ **Clear Interpretation**: Enhanced laterality indicators and documentation
-
----
-
-*This guide provides comprehensive coverage of the asymmetry analysis pipeline. Refer to individual documentation files for detailed technical instructions.*
