@@ -46,7 +46,7 @@ class LateralityMapper:
             raise FileNotFoundError(f"Asymmetry results not found: {self.results_file}")
 
         results_df = pd.read_csv(self.results_file)
-        print(f"✅ Loaded {len(results_df)} bilateral region pairs")
+        print(f" Loaded {len(results_df)} bilateral region pairs")
 
         # Create SegId to LI mapping for both left and right regions
         segid_to_li = {}
@@ -61,13 +61,13 @@ class LateralityMapper:
             segid_to_li[left_segid] = li_value
             segid_to_li[right_segid] = -li_value  # Flip sign for right hemisphere
 
-        print(f"✅ Created SegId-to-LI mapping for {len(segid_to_li)} regions")
+        print(f" Created SegId-to-LI mapping for {len(segid_to_li)} regions")
         return segid_to_li, results_df
 
     def load_parcellation_data(self):
         """Load FreeSurfer parcellation data"""
 
-        print("🧠 Loading parcellation data...")
+        print(" Loading parcellation data...")
 
         if not self.parcellation_file.exists():
             raise FileNotFoundError(
@@ -78,7 +78,7 @@ class LateralityMapper:
         parc_img = nib.load(self.parcellation_file)
         parc_data = parc_img.get_fdata().astype(int)
 
-        print(f"✅ Loaded parcellation: {parc_data.shape}")
+        print(f" Loaded parcellation: {parc_data.shape}")
         print(f"   Unique regions: {len(np.unique(parc_data))}")
         print(f"   SegId range: {parc_data.min()} to {parc_data.max()}")
 
@@ -87,7 +87,7 @@ class LateralityMapper:
     def create_laterality_map(self):
         """Create laterality index map"""
 
-        print("\n🎨 Creating laterality index map...")
+        print("\n Creating laterality index map...")
 
         # Load data
         segid_to_li, results_df = self.load_asymmetry_results()
@@ -115,7 +115,7 @@ class LateralityMapper:
             else:
                 unmapped_regions.add(segid)
 
-        print(f"✅ Mapped {mapped_regions} regions to LI values")
+        print(f" Mapped {mapped_regions} regions to LI values")
         if unmapped_regions:
             print(
                 f"⚠️  Unmapped regions: {len(unmapped_regions)} (SegIds: {sorted(list(unmapped_regions))[:10]}{'...' if len(unmapped_regions) > 10 else ''})"
@@ -169,7 +169,7 @@ class LateralityMapper:
         # Save main LI map
         output_file = self.output_dir / f"{self.patient_id}_laterality_index_map.nii.gz"
         nib.save(li_img, output_file)
-        print(f"✅ Saved: {output_file}")
+        print(f" Saved: {output_file}")
 
         # Create and save binary significant asymmetry mask
         sig_mask = (np.abs(li_map) > 0.1).astype(np.float32)
@@ -180,7 +180,7 @@ class LateralityMapper:
             self.output_dir / f"{self.patient_id}_significant_asymmetry_mask.nii.gz"
         )
         nib.save(sig_img, sig_output_file)
-        print(f"✅ Saved: {sig_output_file}")
+        print(f" Saved: {sig_output_file}")
 
         # Create and save thresholded maps for visualization
         # Positive LI map (Left > Right)
@@ -191,7 +191,7 @@ class LateralityMapper:
             self.output_dir / f"{self.patient_id}_left_dominant_regions.nii.gz"
         )
         nib.save(pos_img, pos_output_file)
-        print(f"✅ Saved: {pos_output_file}")
+        print(f" Saved: {pos_output_file}")
 
         # Negative LI map (Right > Left)
         neg_li_map = np.where(li_map < -0.1, np.abs(li_map), 0).astype(np.float32)
@@ -201,13 +201,13 @@ class LateralityMapper:
             self.output_dir / f"{self.patient_id}_right_dominant_regions.nii.gz"
         )
         nib.save(neg_img, neg_output_file)
-        print(f"✅ Saved: {neg_output_file}")
+        print(f" Saved: {neg_output_file}")
 
         # Save statistics and mapping info
         stats_file = self.output_dir / f"{self.patient_id}_laterality_map_stats.json"
         with open(stats_file, "w") as f:
             json.dump(stats, f, indent=2)
-        print(f"✅ Saved: {stats_file}")
+        print(f" Saved: {stats_file}")
 
         # Save region mapping table
         mapping_df = results_df[
@@ -224,14 +224,14 @@ class LateralityMapper:
 
         mapping_file = self.output_dir / f"{self.patient_id}_segid_to_li_mapping.csv"
         mapping_df.to_csv(mapping_file, index=False)
-        print(f"✅ Saved: {mapping_file}")
+        print(f" Saved: {mapping_file}")
 
         return output_file, sig_output_file, pos_output_file, neg_output_file
 
     def create_visualization_info(self, results_df):
         """Create visualization information"""
 
-        print("\n📋 Creating visualization info...")
+        print("\n Creating visualization info...")
 
         significant_regions = results_df[results_df["laterality_index"].abs() > 0.1]
 
@@ -293,7 +293,7 @@ mricrogl -o T1w_acpc_dc_restore.nii.gz -l {self.patient_id}_laterality_index_map
         viz_file = self.output_dir / f"{self.patient_id}_visualization_guide.md"
         with open(viz_file, "w") as f:
             f.write(viz_info)
-        print(f"✅ Saved: {viz_file}")
+        print(f" Saved: {viz_file}")
 
         return viz_file
 
@@ -301,7 +301,7 @@ mricrogl -o T1w_acpc_dc_restore.nii.gz -l {self.patient_id}_laterality_index_map
 def main():
     """Main execution function"""
 
-    print("🎯 Creating Laterality Index Maps for Brain Visualization")
+    print(" Creating Laterality Index Maps for Brain Visualization")
     print("=" * 70)
 
     data_dir = "Dataset"
@@ -322,11 +322,11 @@ def main():
         # Create visualization guide
         viz_file = mapper.create_visualization_info(results_df)
 
-        print("\n🎉 LATERALITY MAPPING COMPLETED!")
+        print("\n LATERALITY MAPPING COMPLETED!")
         print("=" * 70)
         print(f"📁 All files saved to: {mapper.output_dir}")
 
-        print("\n🔍 Files created:")
+        print("\n Files created:")
         for file in sorted(mapper.output_dir.glob("*")):
             print(f"   ✓ {file.name}")
 
@@ -340,7 +340,7 @@ def main():
             f"   • LI range: {stats['li_range'][0]:.4f} to {stats['li_range'][1]:.4f}"
         )
 
-        print(f"\n🎨 VISUALIZATION:")
+        print(f"\n VISUALIZATION:")
         print("   Load the T1w image and laterality map in FSLeyes/MRIcroGL")
         print("   Use Red-Yellow colormap with ±0.1 threshold")
         print(f"   See {viz_file.name} for detailed instructions")
