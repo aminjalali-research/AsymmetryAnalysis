@@ -17,7 +17,7 @@ sys.path.append("src")
 
 
 class LateralityMapper:
-    """Create spatial LI maps from parcellation and asymmetry results"""
+    """Create spatial LI maps from parcellation, T1w-MRI, perfusion file, and asymmetry results"""
 
     def __init__(self, data_dir, patient_id="P013"):
         self.data_dir = Path(data_dir)
@@ -40,7 +40,7 @@ class LateralityMapper:
     def load_asymmetry_results(self):
         """Load previously computed asymmetry results"""
 
-        print("📊 Loading asymmetry results...")
+        print(" Loading asymmetry results...")
 
         if not self.results_file.exists():
             raise FileNotFoundError(f"Asymmetry results not found: {self.results_file}")
