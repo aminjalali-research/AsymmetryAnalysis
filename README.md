@@ -5,6 +5,31 @@
 - Before: Laterality values appeared throughout the entire image volume, including background areas outside the brain. 
   After: Laterality values only appear within brain tissue regions defined by the FreeSurfer parcellation. (How: Initialize LI map with NaN for non-brain areas, Create brain mask from parcellation (parc_data > 0), Only assign LI values within brain regions)
 
+- How about it work on this repository: https://github.com/PennLINC/aslprep
+
+# Template Usage and ROI Analysis
+Labels: Only 3 territories defined in vascular_territories_atlas_labels.txt:
+- LICA: Left Internal Carotid Artery territory
+- RICA: Right Internal Carotid Artery territory
+- VBA: Vertebrobasilar Artery territory
+
+# Processing Templates
+MNI Standard Space: The pipeline transforms data to MNI space (MNINonLinear processing in stage 10-12)
+T1w Native Space: Primary processing occurs in subject's native T1w space (ASLT1w)
+Surface Templates: Uses HCP surface meshes with MSMAll registration by default
+
+# The templates used are NOT explicitly symmetrical
+
+- Vascular Territories Atlas: Has separate left (LICA) and right (RICA) carotid territories. This suggests anatomical asymmetry is preserved.
+Not symmetrical - maintains left/right distinctions
+
+- MNI Template: Standard MNI152 space used for final outputs. While MNI templates can be symmetrical, the pipeline doesn't specify use of a symmetrical version.
+-  Surface Processing: Uses HCP's MSMAll registration which preserves individual cortical folding patterns. Not symmetrical because it maintains subject-specific anatomy.
+
+
+
+
+
 
 
 # Conferences
