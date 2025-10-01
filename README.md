@@ -1,3 +1,12 @@
+# Updates
+- The laterality maps are showing values for the entire image volume instead of just the brain regions. Fixed the create_laterality_map.py to properly mask the laterality values to only brain regions (non-zero parcellation areas).
+- Updated the save function to handle NaN values properly when creating the NIfTI files. The main LI map should convert NaN values to 0 for proper NIfTI format.
+
+- Before: Laterality values appeared throughout the entire image volume, including background areas outside the brain. 
+  After: Laterality values only appear within brain tissue regions defined by the FreeSurfer parcellation. (How: Initialize LI map with NaN for non-brain areas, Create brain mask from parcellation (parc_data > 0), Only assign LI values within brain regions)
+
+
+
 # Conferences
 - [Neurology Congress 2026](https://magnivelinternational.com/conferences/international-conference-on-neurology-and-neurological-disorders-2026)
 - [FRONTIERS IN NEUROSCIENCE](https://neurosciences-research.org/)
