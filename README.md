@@ -14,23 +14,22 @@ Labels: Only 3 territories defined in vascular_territories_atlas_labels.txt:
 - VBA: Vertebrobasilar Artery territory
 
 # Processing Templates
-MNI Standard Space: The pipeline transforms data to MNI space (MNINonLinear processing in stage 10-12)
-T1w Native Space: Primary processing occurs in subject's native T1w space (ASLT1w)
-Surface Templates: Uses HCP surface meshes with MSMAll registration by default
+- MNI Standard Space: The pipeline transforms data to MNI space (MNINonLinear processing in stage 10-12)
+- T1w Native Space: Primary processing occurs in subject's native T1w space (ASLT1w)
+- Surface Templates: Uses HCP surface meshes with MSMAll registration by default
 
 # The templates used are NOT explicitly symmetrical
 
 - Vascular Territories Atlas: Has separate left (LICA) and right (RICA) carotid territories. This suggests anatomical asymmetry is preserved.
-Not symmetrical - maintains left/right distinctions
-
+- Not symmetrical because it maintains left/right distinctions.
 - MNI Template: Standard MNI152 space used for final outputs. While MNI templates can be symmetrical, the pipeline doesn't specify use of a symmetrical version.
--  Surface Processing: Uses HCP's MSMAll registration which preserves individual cortical folding patterns. Not symmetrical because it maintains subject-specific anatomy.
+- Surface Processing: Uses HCP's MSMAll registration which preserves individual cortical folding patterns. Not symmetrical because it maintains subject-specific anatomy.
 
 
 
 
 
-
+-----
 
 # Conferences
 - [Neurology Congress 2026](https://magnivelinternational.com/conferences/international-conference-on-neurology-and-neurological-disorders-2026)
