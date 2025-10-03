@@ -1,3 +1,6 @@
+
+Check this if there are templates for symmetrical voxel-based bilateral-pairing: https://github.com/CUHK-AIM-Group/NeuroSTORM
+
 # Updates
 - The laterality maps are showing values for the entire image volume instead of just the brain regions. Fixed the create_laterality_map.py to properly mask the laterality values to only brain regions (non-zero parcellation areas).
 - Updated the save function to handle NaN values properly when creating the NIfTI files. The main LI map should convert NaN values to 0 for proper NIfTI format.
