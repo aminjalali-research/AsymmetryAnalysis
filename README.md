@@ -39,7 +39,7 @@ Labels: Only 3 territories defined in vascular_territories_atlas_labels.txt:
 - [FRONTIERS IN NEUROSCIENCE](https://neurosciences-research.org/)
 - [Intelligent Systems Conference 2026](https://saiconference.com/IntelliSys)
 - [Neuroscience, neurology, and brain disorders](https://neuroscience2026.researchconnects.org/)
-
+https://www.ean.org/meet/congresses/future-congresses
 
 # FreeSurfer ASL Asymmetry Analysis
 
