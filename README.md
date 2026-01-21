@@ -1,4 +1,20 @@
 
+# Conferences
+- European Congress on Epileptology (ECE)
+- EAN Congress (European Academy of Neurology)
+- European Conference on Clinical Neuroimaging: ECCN
+- 
+- [Neurology Congress 2026](https://magnivelinternational.com/conferences/international-conference-on-neurology-and-neurological-disorders-2026)
+- [Intelligent Systems Conference 2026](https://saiconference.com/IntelliSys)
+- [Neuroscience, neurology, and brain disorders](https://neuroscience2026.researchconnects.org/)
+- NeuroImage 
+- MICCAI (Medical Image Computing and Computer-Assisted Intervention)
+- IEEE ISBI (International Symposium on Biomedical Imaging)
+
+https://www.ean.org/meet/congresses/future-congresses
+
+----
+
 Check this if there are templates for symmetrical voxel-based bilateral-pairing: https://github.com/CUHK-AIM-Group/NeuroSTORM
 
 # Updates
@@ -30,19 +46,8 @@ Labels: Only 3 territories defined in vascular_territories_atlas_labels.txt:
 
 
 
-
-
 -----
 
-# Conferences
-- [Neurology Congress 2026](https://magnivelinternational.com/conferences/international-conference-on-neurology-and-neurological-disorders-2026)
-- [Intelligent Systems Conference 2026](https://saiconference.com/IntelliSys)
-- [Neuroscience, neurology, and brain disorders](https://neuroscience2026.researchconnects.org/)
-- NeuroImage 
-- MICCAI (Medical Image Computing and Computer-Assisted Intervention)
-- IEEE ISBI (International Symposium on Biomedical Imaging)
-
-https://www.ean.org/meet/congresses/future-congresses
 
 # FreeSurfer ASL Asymmetry Analysis
 
