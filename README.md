@@ -1,17 +1,20 @@
 
 # Conferences
-- European Congress on Epileptology (ECE)
-- EAN Congress (European Academy of Neurology)
-- European Conference on Clinical Neuroimaging: ECCN
-- 
-- [Neurology Congress 2026](https://magnivelinternational.com/conferences/international-conference-on-neurology-and-neurological-disorders-2026)
-- [Intelligent Systems Conference 2026](https://saiconference.com/IntelliSys)
-- [Neuroscience, neurology, and brain disorders](https://neuroscience2026.researchconnects.org/)
-- NeuroImage 
-- MICCAI (Medical Image Computing and Computer-Assisted Intervention)
-- IEEE ISBI (International Symposium on Biomedical Imaging)
 
-https://www.ean.org/meet/congresses/future-congresses
+- [EAN Congress (European Academy of Neurology)](https://www.ean.org/congress2026/abstracts/public-submission/public-submission-instructions)  28 January 2026
+- [Neuroscience, neurology, and brain disorders](https://neuroscience2026.researchconnects.org/) 30 January 2026
+- [Intelligent Systems Conference 2026](https://saiconference.com/IntelliSys) 01 February 2026
+- [European Congress on Epileptology (ECE)](https://www.ilae.org/eec2026/section/sectionid/2) 6 February 2026
+
+
+
+---
+- NeuroImage 
+- MICCAI (Medical Image Computing and Computer-Assisted Intervention) 12th February 2026
+- European Conference on Clinical Neuroimaging: ECCN
+- IEEE ISBI (International Symposium on Biomedical Imaging)
+- [Neurology Congress 2026](https://magnivelinternational.com/conferences/international-conference-on-neurology-and-neurological-disorders-2026)
+- https://www.ean.org/meet/congresses/future-congresses
 
 ----
 
