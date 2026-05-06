@@ -1,5 +1,36 @@
-# Dataset folder - contains sensitive/large data files
+# Dataset folders - contain sensitive/large data files
 Dataset/
+DatasetControls/
+"Dataset MNI/"
+
+# Generated analysis outputs (large; reproducible from code + raw data)
+results_zscore/
+results_voxel/
+results/
+results_analysis/
+ez_analysis_mdt/
+visual_analysis/
+
+# Patient demographic spreadsheet (privacy-sensitive)
+clinical_spreadsheet.xlsx
+
+# Internal tooling state
+.claude/
+archive/
+
+# Manuscript text, drafts, and internal audit logs
+# (kept private; not for public GitHub)
+manuscript/
+docs/manuscript/
+docs/superpowers/
+
+# LaTeX build artifacts (in case manuscript/ is ever local-only enabled)
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.synctex.gz
 
 # Python cache and compiled files
 __pycache__/
@@ -72,3 +103,19 @@ coverage.xml
 # Temporary files
 *.tmp
 *.temp
+
+# Local env
+.env
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.toc
+*.out
+
+# Local-only data dumps
+/tmp/
