@@ -245,9 +245,23 @@ def build_group_asymmetry_stats(group_key, force_rebuild=False):
     valid_sd = count >= 2
     sd[valid_sd] = np.sqrt(M2[valid_sd] / (count[valid_sd] - 1))
 
+    # Bilateral SD pooling: left and right anatomical mirror voxels share
+    # the elementwise-max SD. This eliminates the L-vs-R SD asymmetry that
+    # would otherwise bias clusters systematically toward whichever
+    # hemisphere happens to have lower control SD (e.g. dorsal convexity).
+    sd_mirror = np.flip(sd, axis=0)
+    sd = np.maximum(sd, sd_mirror)
+
+    # Physical SD floor in percent-AI units. The previous floor of 0.01
+    # admitted voxels with effectively zero control variance, producing
+    # spurious clip-to-20 zAI at brain convexity. 5% is a conservative
+    # biologically-meaningful minimum for healthy-control AI dispersion.
+    SD_FLOOR_PCT = 5.0
+    sd = np.maximum(sd, SD_FLOOR_PCT)
+
     # Brain mask
     coverage = count / n
-    brain_mask = (coverage >= BRAIN_MASK_COVERAGE) & (sd > 0.01)
+    brain_mask = (coverage >= BRAIN_MASK_COVERAGE)
     mean[~brain_mask] = 0
     sd[~brain_mask] = 0
 
@@ -397,8 +411,11 @@ def process_patient(patient_id, mean_ai, sd_ai, brain_mask, parc, gm_mask,
     # Patient's asymmetry map
     patient_ai, patient_valid = compute_asymmetry_map(perfusion)
 
-    # Mask: brain coverage + gray matter + patient has data + SD is sufficient
-    valid = brain_mask & gm_mask & patient_valid & (sd_ai > 0.01)
+    # Mask: brain coverage + gray matter + patient has data.
+    # SD is already floored at 5% (percent-AI units) and bilaterally
+    # pooled by the build_control_normative.py step, so no second SD
+    # gate is needed here.
+    valid = brain_mask & gm_mask & patient_valid & (sd_ai > 0)
 
     # Z-score of asymmetry
     z_asym = np.zeros_like(patient_ai)
