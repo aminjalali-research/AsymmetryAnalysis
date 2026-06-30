@@ -119,3 +119,15 @@ coverage.xml
 
 # Local-only data dumps
 /tmp/
+
+# Session artifacts / archived data / run logs (2026-06 zAI symmetric-fix work)
+ControlRetrieval/
+_archived_origspace_zai_*/
+_excluded_from_cohort/
+clinical_spreadsheet.backup_*.xlsx
+symreg/sym_perf/
+symreg/templates/
+symreg/patient_brains/
+symreg/validation/
+symreg/logs/
+symreg/*.err
