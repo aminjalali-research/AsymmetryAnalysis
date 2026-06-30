@@ -10,6 +10,17 @@ For every patient, compute a per-voxel z-score of *asymmetry*, not raw perfusion
 AI(voxel) = 100 × (Left − Right) / ((Left + Right) / 2)
 ```
 
+where `Right` is the left–right (axis-0) mirror of the volume. **This mirror is only
+valid in a left–right symmetric reference space.** MNI152 ASL is not L–R symmetric, so
+running the naive mirror on raw MNI data over-disperses the zAI (flags 22–50 % of gray
+matter at |z|≥1.96 instead of ~5 %). The canonical pipeline therefore first registers
+every subject onto a flip-symmetric T1 template (FSL flirt+fnirt; see `symreg/` and
+`symreg/run_sym_pipeline.sh`) and runs the AI on the warped perfusion. Pass `--sym` so the
+script reads `symreg/sym_perf/<id>_perf_sym.nii.gz` (+ `_aparc_sym`) instead of the raw
+MNI data. After this fix the cohort flags **12.9 %** of GM (control leave-one-out 6.9 %).
+Note the zAI itself is invariant to the `(L+R)/2` vs `(L+R)` denominator (the constant
+cancels in the z-score); only the percent-unit SD floor is in `(L+R)/2` units.
+
 then it is z-scored against the control distribution of asymmetry at that same voxel,
 
 ```
@@ -29,7 +40,7 @@ This is the literature-standard zAI of Shang et al. (2021), Boscolo Galazzo et a
 - `results_zscore/groups/<group>/mean_perfusion.nii.gz` (from step 1)
 - `results_zscore/groups/<group>/sd_perfusion.nii.gz` (from step 1; also used to compute the asymmetry control distribution)
 - `results_zscore/groups/<group>/consensus_parcellation.nii.gz` (from step 1)
-- `Dataset/<pid>/<pid>_perfusion_calib_resampled_to_T1w.nii.gz` (patient ASL, MNI space)
+- `Dataset/<pid>/<pid>_perfusion_calib_resampled_to_T1w.nii.gz` (patient ASL, MNI space) — or, with `--sym`, `symreg/sym_perf/<pid>_perf_sym.nii.gz` (symmetric-template space; the canonical choice)
 
 ## Outputs
 
@@ -40,9 +51,10 @@ This is the literature-standard zAI of Shang et al. (2021), Boscolo Galazzo et a
 ## Usage
 
 ```bash
-python 02_compute_zai.py                                  # all patients, F_20_39
-python 02_compute_zai.py --patient P013                   # single patient
-python 02_compute_zai.py --threshold 3.0 --min-cluster 50 # custom thresholds
+# Canonical (symmetric-space) — run per age-matched band after symreg/run_sym_pipeline.sh:
+python 02_compute_zai.py --sym --rebuild --group FM_20_39  # also FM_40_59, FM_60_79
+python 02_compute_zai.py --sym --patient P013              # single patient
+python 02_compute_zai.py --threshold 3.0 --min-cluster 50  # custom thresholds
 ```
 
 Typical runtime: ~1 minute per patient.
