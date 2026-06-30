@@ -570,7 +570,7 @@ class InteractiveOverlayViewer:
         """
         if not self._check_zai():
             return
-        group = self._pick_zscore_group() or "F_20_39"
+        group = self._pick_zscore_group() or "FM_20_39"
 
         mean_f = f"{self.zscore_group_dir}/{group}/mean_perfusion.nii.gz"
         ai_f = str(self.zai_files["asymmetry_zscore"])
@@ -591,6 +591,58 @@ class InteractiveOverlayViewer:
         except Exception as e:
             print(f"  [!] Error: {e}")
 
+    def view_zai_cleaned_overlay(self):
+        """Island-cleaned zAI overlay (option 16).
+
+        Generates an island-free cleaned zAI NIfTI + PNG montage via
+        clean_overlay.py, then offers the cleaned NIfTI to FSLeyes so
+        speckle islands no longer clutter the interactive overlay. Falls back
+        gracefully if the module or maps are unavailable. Non-breaking add-on.
+        """
+        if not self._check_zai():
+            return
+        import importlib.util as _ilu
+        import sys as _sys
+        co_path = Path(__file__).parent / "clean_overlay.py"
+        if not co_path.exists():
+            print("[!] clean_overlay.py not found; cannot generate cleaned overlay.")
+            return
+        try:
+            spec = _ilu.spec_from_file_location("clean_overlay", str(co_path))
+            co = _ilu.module_from_spec(spec)
+            _sys.modules["clean_overlay"] = co
+            spec.loader.exec_module(co)
+        except Exception as e:
+            print(f"[!] Could not load clean_overlay.py: {e}")
+            return
+
+        print(f"\n[*] ISLAND-CLEANED zAI OVERLAY — {self.patient_id}")
+        print("    Thresholding |zAI|>=3, min_cluster=50, opening+closing.")
+        report = co.process_patient(self.patient_id, threshold=3.0,
+                                    min_cluster=50, space="zai",
+                                    use_roi_mask=True)
+        if not report:
+            print("[!] Cleaning failed; see messages above.")
+            return
+        cleaned_nii = report.get("cleaned_nifti")
+        group = report.get("group", "FM_20_39")
+        mean_f = f"{self.zscore_group_dir}/{group}/mean_perfusion.nii.gz"
+        print(f"\n  Islands removed: {report['n_islands_removed']} "
+              f"({report['voxels_removed']:,} vox)")
+        print(f"  Montage: {report.get('montage_png')}")
+        print(f"  QC:      {report.get('qc_png')}")
+        if cleaned_nii and Path(cleaned_nii).exists():
+            cmd = (f"fsleyes '{mean_f}' '{cleaned_nii}' "
+                   f"-cm brain_colours_diverging_bwr -dr -8 8 -a 75 "
+                   f"-n 'zAI cleaned' &")
+            print(f"\n  Command:\n  {cmd}\n")
+            try:
+                subprocess.Popen(cmd, shell=True, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+                print("  [+] FSLeyes launched (island-free overlay)")
+            except Exception as e:
+                print(f"  [!] Error: {e}")
+
     # ------------------------------------------------------------------
     # OPTION 7: Lateralized Dominance Maps (Left-dominant vs Right-dominant)
     # ------------------------------------------------------------------
@@ -603,7 +655,7 @@ class InteractiveOverlayViewer:
         """
         if not self._check_zai():
             return
-        group = self._pick_zscore_group() or "F_20_39"
+        group = self._pick_zscore_group() or "FM_20_39"
 
         mean_f = f"{self.zscore_group_dir}/{group}/mean_perfusion.nii.gz"
         left_f = self.zai_files["left_dominant"]
@@ -655,7 +707,7 @@ class InteractiveOverlayViewer:
         if not self._check_zai():
             return
         group = (self._pick_zscore_group() if len(self.zscore_control_files) > 1
-                 else (next(iter(self.zscore_control_files), None) or "F_20_39"))
+                 else (next(iter(self.zscore_control_files), None) or "FM_20_39"))
 
         mean_f = f"{self.zscore_group_dir}/{group}/mean_perfusion.nii.gz"
         sig_f = self.zai_files["significant"]
@@ -717,7 +769,7 @@ class InteractiveOverlayViewer:
         # than one group available (avoids blocking input() in the
         # surgeon-facing default flow).
         group = (self._pick_zscore_group() if len(self.zscore_control_files) > 1
-                 else (next(iter(self.zscore_control_files), None) or "F_20_39"))
+                 else (next(iter(self.zscore_control_files), None) or "FM_20_39"))
         mean_f = f"{self.zscore_group_dir}/{group}/mean_perfusion.nii.gz"
 
         left_f = cdir / f"{self.patient_id}_clinical_zai_lateralized_left_dominant.nii.gz"
@@ -924,7 +976,7 @@ class InteractiveOverlayViewer:
         print(f"  [+] Top-{top_n} mask written: {tmp_path}  ({int(mask.sum())} voxels)")
 
         # Launch FSLeyes: T1w anatomy + continuous zAI (faded) + top-N mask (yellow)
-        group = (next(iter(self.zscore_control_files), None) or "F_20_39")
+        group = (next(iter(self.zscore_control_files), None) or "FM_20_39")
         mean_f = f"{self.zscore_group_dir}/{group}/mean_perfusion.nii.gz"
         ai_f = str(self.zai_files["asymmetry_zscore"])
         t1_f = self.freesurfer_files["T1w"]
@@ -1100,7 +1152,7 @@ class InteractiveOverlayViewer:
         # Launch FSLeyes
         t1_f = self.freesurfer_files["T1w"]
         bg = t1_f if Path(t1_f).exists() else (
-            f"{self.zscore_group_dir}/F_20_39/mean_perfusion.nii.gz"
+            f"{self.zscore_group_dir}/FM_20_39/mean_perfusion.nii.gz"
         )
 
         cmd = (
@@ -1129,7 +1181,7 @@ class InteractiveOverlayViewer:
         """
         if not self._check_zai():
             return
-        group = self._pick_zscore_group() or "F_20_39"
+        group = self._pick_zscore_group() or "FM_20_39"
 
         mean_f = f"{self.zscore_group_dir}/{group}/mean_perfusion.nii.gz"
         parc_f = f"{self.zscore_group_dir}/{group}/consensus_parcellation.nii.gz"
@@ -1388,10 +1440,11 @@ class InteractiveOverlayViewer:
         print("  13. Show File List (canonical paths only)")
         print("  14. Show Quick FSLeyes Commands (canonical zAI paths)")
         print(f"  15. Clinical Report * (surgeon-facing, |zAI|>=4){zai_tag}")
+        print(f"  16. Island-Cleaned zAI Overlay * (speckle-free NIfTI + montage){zai_tag}")
         print("   0. Exit")
         print()
 
-        return input("Enter choice (0-15, S): ").strip().lower()
+        return input("Enter choice (0-16, S): ").strip().lower()
 
     def main_loop(self):
         """Main interactive loop."""
@@ -1423,6 +1476,7 @@ class InteractiveOverlayViewer:
             "13": self.show_file_list,
             "14": self.show_quick_commands,
             "15": self.view_clinical_report,
+            "16": self.view_zai_cleaned_overlay,
         }
 
         # Options that print to stdout (no FSLeyes wait needed)
@@ -1443,7 +1497,7 @@ class InteractiveOverlayViewer:
             elif choice in dispatch:
                 dispatch[choice]()
             else:
-                print("[!] Invalid choice. Please enter 0-15 or S.")
+                print("[!] Invalid choice. Please enter 0-16 or S.")
 
             if choice not in no_pause_choices:
                 input("\nPress Enter to return to menu...")

@@ -1,6 +1,6 @@
 # Step 2: Compute Control-Referenced zAI Maps
 
-> Part of the canonical voxel-based zAI pipeline (Pipeline B). Step 2 of 4. Implements the literature-standard control-referenced asymmetry z-score (zAI).
+> Part of the canonical voxel-based zAI pipeline (Pipeline B). Step 2 of 4. Implements the literature-standard control-referenced asymmetry z-score (zAI) **and** the per-cluster direction-of-abnormality inference (introduced 2026-05-06, see [09-clinical-interpretation.md](09-clinical-interpretation.md)).
 
 ## Purpose
 

@@ -69,7 +69,13 @@ BASE_DIR = Path(__file__).parent
 CONTROLS_BASE_DIR = BASE_DIR / "DatasetControls"
 PATIENT_DATASET_DIR = BASE_DIR / "Dataset"
 OUTPUT_DIR = BASE_DIR / "results_zscore" / "asymmetry"
-GROUP_KEY = "F_20_39"
+GROUP_KEY = "FM_20_39"
+
+# Symmetric-space mode (2026-06-22 zAI over-dispersion fix). When enabled, the
+# mirror-AI is computed on perfusion registered to a left-right symmetric
+# template (symreg/sym_perf/), so np.flip(axis=0) compares homologous voxels.
+SYM_MODE = False
+SYM_DIR = BASE_DIR / "symreg" / "sym_perf"
 
 GROUP_DEFINITIONS = {
     "F_20_39": {"subdirs": ["20_29F", "30_39F"]},
@@ -78,9 +84,10 @@ GROUP_DEFINITIONS = {
     "M_20_39": {"subdirs": ["20_29M", "30_39M"]},
     "M_40_59": {"subdirs": ["40_49M", "50_59M"]},
     "M_60_79": {"subdirs": ["60_69M", "70_79M"]},
-    "FM_20_39": {"subdirs": ["20_29F", "30_39F", "20_29M", "30_39M"]},
-    "FM_40_59": {"subdirs": ["40_49F", "50_59F", "40_49M", "50_59M"]},
-    "FM_60_79": {"subdirs": ["60_69F", "70_79F", "60_69M", "70_79M"]},
+    # Thesis comparator groups: sex-pooled, stored flat in DatasetControls/FM_*/.
+    "FM_20_39": {"subdirs": ["FM_20_39"]},
+    "FM_40_59": {"subdirs": ["FM_40_59"]},
+    "FM_60_79": {"subdirs": ["FM_60_79"]},
 }
 
 # Gray matter labels
@@ -177,6 +184,11 @@ def discover_subjects(group_key):
 
 def find_perfusion_file(subject_dir):
     """Find the upsampled MNI-space perfusion NIfTI."""
+    if SYM_MODE:
+        p = SYM_DIR / f"{subject_dir.name}_perf_sym.nii.gz"
+        if not p.exists():
+            raise FileNotFoundError(f"No symmetric perfusion for {subject_dir.name}: {p}")
+        return p
     candidates = list(subject_dir.glob("*_MNISpace_perfusion_calib_upsampled.nii.gz"))
     if len(candidates) == 1:
         return candidates[0]
@@ -302,6 +314,11 @@ def build_group_asymmetry_stats(group_key, force_rebuild=False):
 # ============================================================================
 
 def find_patient_perfusion(patient_dir):
+    if SYM_MODE:
+        p = SYM_DIR / f"{patient_dir.name}_perf_sym.nii.gz"
+        if not p.exists():
+            raise FileNotFoundError(f"No symmetric perfusion for {patient_dir.name}: {p}")
+        return p
     candidates = list(patient_dir.glob("*_perfusion_calib_resampled_to_T1w.nii.gz"))
     if len(candidates) == 1:
         return candidates[0]
@@ -609,7 +626,7 @@ def plot_montage(patient_id, sig_z, mask, mean_ai, brain_mask, out_dir, prefix):
 # ============================================================================
 
 def main():
-    global ZSCORE_THRESHOLD, MIN_CLUSTER_SIZE
+    global ZSCORE_THRESHOLD, MIN_CLUSTER_SIZE, SYM_MODE
 
     parser = argparse.ArgumentParser(
         description="Control-referenced asymmetry z-score analysis")
@@ -618,11 +635,17 @@ def main():
     parser.add_argument("--threshold", "-t", type=float, default=ZSCORE_THRESHOLD)
     parser.add_argument("--min-cluster", type=int, default=MIN_CLUSTER_SIZE)
     parser.add_argument("--rebuild", action="store_true")
+    parser.add_argument("--sym", action="store_true",
+                        help="Use symmetric-template-registered perfusion (symreg/sym_perf/) "
+                             "so the mirror-AI compares homologous voxels (zAI over-dispersion fix).")
     args = parser.parse_args()
 
     ZSCORE_THRESHOLD = args.threshold
     MIN_CLUSTER_SIZE = args.min_cluster
     group_key = args.group
+    SYM_MODE = args.sym
+    if SYM_MODE:
+        print("  [SYM] Using symmetric-template-registered perfusion from symreg/sym_perf/")
 
     print("\n" + "=" * 70)
     print("  CONTROL-REFERENCED ASYMMETRY Z-SCORE ANALYSIS")
@@ -678,6 +701,10 @@ def main():
             id_col = [c for c in df.columns if "ID" in c][0]
             age_col = [c for c in df.columns if "AGE" in c][0]
             sex_col = [c for c in df.columns if "SEX" in c or "GENDER" in c][0]
+            # Match patients to THIS group's sex + age band, parsed from group_key
+            # (e.g. FM_20_39 -> sex=FM, ages 20-39). "FM" is sex-pooled (any sex).
+            gp = group_key.split("_")
+            grp_sex, grp_lo, grp_hi = gp[0], int(gp[1]), int(gp[2])
             patients = []
             for _, row in df.iterrows():
                 pid = str(row[id_col]).strip()
@@ -685,9 +712,15 @@ def main():
                     pid = pid[4:]
                 age = int(row[age_col])
                 sex = str(row[sex_col]).strip().upper()[0]
-                if sex == "F" and 20 <= age <= 39:
-                    if (PATIENT_DATASET_DIR / pid).exists():
-                        patients.append(pid)
+                sex_ok = (grp_sex == "FM") or (sex == grp_sex)
+                if sex_ok and grp_lo <= age <= grp_hi:
+                    if not (PATIENT_DATASET_DIR / pid).exists():
+                        continue
+                    # In symmetric-space mode, skip patients without a registered
+                    # symmetric perfusion (e.g. P014, excluded from the cohort).
+                    if SYM_MODE and not (SYM_DIR / f"{pid}_perf_sym.nii.gz").exists():
+                        continue
+                    patients.append(pid)
         else:
             patients = sorted([d.name for d in PATIENT_DATASET_DIR.iterdir() if d.is_dir()])
 

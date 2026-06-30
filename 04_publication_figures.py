@@ -72,11 +72,18 @@ plt.rcParams["legend.fontsize"] = 9
 BASE_DIR = Path(__file__).parent
 RESULTS_DIR = BASE_DIR / "results_zscore"
 ASYMMETRY_DIR = RESULTS_DIR / "asymmetry"
-GROUP_KEY = "F_20_39"
+GROUP_KEY = "FM_20_39"   # default band (F_20_39 retired; per-patient bands resolved elsewhere)
 GROUP_DIR = RESULTS_DIR / "groups" / GROUP_KEY
 ASYM_GROUP_DIR = ASYMMETRY_DIR / "groups" / GROUP_KEY
 DATASET_DIR = BASE_DIR / "Dataset"
 OUTPUT_DIR = BASE_DIR / "visual_analysis"
+
+# Symmetric-space mode (2026-06-23 zAI fix): zAI maps are in the symmetric
+# template space, so the per-patient clinical-ROI mask must use the symmetric
+# parcellation (symreg/sym_perf/<PID>_aparc_sym.nii.gz). Set via --sym; also
+# honoured by clean_overlay.py, which reuses load_clinical_roi_mask.
+SYM_MODE = False
+SYM_DIR = BASE_DIR / "symreg" / "sym_perf"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 ZAI_THRESHOLD = 1.96
@@ -171,7 +178,10 @@ def load_clinical_roi_mask(patient_id, ref_shape=None):
     37 paired regions (Thalamus/Hippocampus/Amygdala + 34 Desikan-Killiany
     cortical).
     """
-    parc_path = DATASET_DIR / patient_id / "aparc+aseg.nii.gz"
+    if SYM_MODE:
+        parc_path = SYM_DIR / f"{patient_id}_aparc_sym.nii.gz"
+    else:
+        parc_path = DATASET_DIR / patient_id / "aparc+aseg.nii.gz"
     if not parc_path.exists():
         return None
     parc = nib.load(str(parc_path)).get_fdata().astype(np.int32)
@@ -909,7 +919,14 @@ if __name__ == "__main__":
              "By default, voxel-level figures (10, 13, 14) are restricted "
              "to the 37-ROI clinical scope per CLAUDE.md / DECISIONS.md "
              "2026-05-05 policy.")
+    parser.add_argument("--sym", action="store_true",
+                        help="zAI maps are in symmetric-template space; use the "
+                             "symmetric per-patient parcellation for the clinical ROI mask.")
     args = parser.parse_args()
+
+    if args.sym:
+        SYM_MODE = True
+        print("→ [SYM] symmetric-space parcellation for clinical ROI mask.")
 
     if args.apply_clinical_mask:
         print("→ 37-ROI clinical mask: ON (default).")

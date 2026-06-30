@@ -10,14 +10,23 @@ Items are grouped by horizon. Within each section, items are unordered — prior
 
 ---
 
+## Recently delivered (2026-05-06)
+
+- ✅ **Direction-of-abnormality inference replaces polarity-flip rule.** `02_compute_zai.py` now loads control perfusion mean/SD and computes per-cluster `cluster_hemi`, `z_perf_cluster_side`, `z_perf_mirror_side`, `direction_class`, `ez_side_pred`. `06_clinical_interpretation.py` consumes the new columns with legacy fallback. F_20_39 cohort re-run yields 3/5 MDT concordance (P014/P020/P026 agree; P013/P015 disagree). The transition from 4/5 (polarity-flip) → 3/5 (direction-aware) is more honest: P015 was a polarity-flip coincidence masking a real hyperperfusion-dominant phenotype.
+- ✅ **Han et al. 2026 SEEG-validated PET Z-map integration** — Han 2026 (n=120, CNS Neurosci Ther doi:10.1002/cns.70876) integrated as the closest methodological precedent. Regional heterogeneity (frontal/parietal κ≈0.65 vs temporal/insular κ≈0.45) explains the P013 mesial-temporal sensitivity gap.
+- ✅ **Manuscript reviewer-comment revision** — ASMs terminology, scanner/voxel-size corrections, HCP-ASL pipeline, AI formula consistency, SEAMO funding, MDT consensus rule (no LLM), localization-vs-lateralization Methods+Results, hyperperfusion / post-ictal Discussion subsection, thresholding formulae for M1–M13, public-dataset external-validation candidates (OpenNeuro ds004199, IDEAS ds005602), bibliography modernized to 2020–2026.
+- ✅ **README comprehensive rewrite + GitHub push** (commit `93db26f`). Manuscript stays private; only code/docs public.
+
 ## Short-term (next 1–3 months)
 
-These items are scoped, well-understood, and gated mostly on data and routine engineering effort. They directly close gaps in the current manuscript.
+These items are scoped, well-understood, and gated mostly on data and routine engineering effort.
 
 - **Acquire and process the remaining eight control demographic groups.** The current Pipeline B Results section is restricted to the five patients matched to `F_20_39` (n = 30 controls). To analyze all 15 patients under Pipeline B requires `F_40_59`, `F_60_79`, the three male bands, and the three sex-pooled bands. The pipeline scales to additional groups without code changes — see [docs/data/layout.md](data/layout.md).
-- **Pipeline A vs Pipeline B concordance analysis.** Once all 15 patients have a Pipeline B prediction, compute patient-level concordance with the Pipeline A prediction (ROI weighted AAI). The preliminary n = 5 observation (5/5 concordant) is consistent with concordant lateralization signals across pipelines but is not statistically informative; the n = 15 analysis will be reported as a primary result. This work is currently deferred from the manuscript per §3.7.4.
-- **Generate Pipeline B figures.** Produce per-patient zAI cluster overlay panels (axial / coronal / sagittal montage with M11 Quality+TFCE significant clusters annotated and labeled by region). The single figure currently referenced as `fig:zai_p013` is not yet rendered (see manuscript follow-up F-21).
-- **Resolve manuscript Table 2 follow-up F-17.** Either implement per-region effect-size aggregation in `05_roi_discrimination.py` so that the three orphan rows (Weighted Cohen's d, Mean Hedges' g, Glass's Δ) are reproducible, or delete those rows and update the surrounding narrative. See [docs/manuscript/notes.md §4](manuscript/notes.md#4-open-follow-ups-manuscript-specific).
+- **Pipeline A vs Pipeline B concordance analysis.** Once all 15 patients have a Pipeline B prediction, compute patient-level concordance with the Pipeline A prediction (ROI weighted AAI). Under the new direction-aware rule the preliminary n = 5 result is 3/5 MDT concordance; the n = 15 analysis will be reported as a primary result.
+- **Generate Pipeline B figures.** Produce per-patient zAI cluster overlay panels (axial / coronal / sagittal montage with M11 Quality+TFCE significant clusters annotated and labeled by region). The figures referenced as `fig:p015_clinical_zai` need to be rendered with the direction-aware cluster annotations (hyper/hypo color-coding).
+- **Public-dataset external validation.** Apply the framework to OpenNeuro ds004199 (Presurgical MRI Epilepsy) and ds005602 (IDEAS). Highest-priority short-term item per recent reviewer feedback — addresses the small-cohort generalizability concern without additional data collection.
+- **Prospective seizure-to-scan-interval collection.** For new patients, record time since last seizure. Required to distinguish FCD-II hyperperfusion from post-ictal hyperperfusion in cases like P015.
+- **Resolve manuscript Table 2 follow-up F-17.** Either implement per-region effect-size aggregation in `05_roi_discrimination.py` so that the three orphan rows (Weighted Cohen's d, Mean Hedges' g, Glass's Δ) are reproducible, or delete those rows and update the surrounding narrative.
 - **End-to-end manuscript compile verification.** Run `pdflatex` (twice + bibtex + twice) on `manuscript/Manuscript_Complete.tex` and confirm no undefined references, no overfull boxes on the longtables, and that every `\cite` resolves against `references.bib`.
 
 ---

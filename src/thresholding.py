@@ -77,7 +77,9 @@ M5_DH = 0.1
 M5_MIN_CLUSTER = 10
 M6_VOXEL_PTHRESH = 0.001
 M6_CLUSTER_ALPHA = 0.05
-M7_N_PERMUTATIONS = 1000
+M7_N_PERMUTATIONS = 200   # cluster-level null at the 95th pctile; 200 perms give
+                          # adequate resolution and keep the 17-patient sweep tractable
+                          # (1000 perms x 17 patients x full-volume labelling = hours).
 M7_CLUSTER_FORMING_Z = 1.64
 M7_ALPHA = 0.05
 M8_N_COMPONENTS = 3
@@ -212,7 +214,11 @@ def m2_quality_percentile(d):
 
 def m3_fdr(d):
     """M3 — Benjamini-Hochberg FDR correction."""
-    quality = d.bilateral_quality_mask()
+    # Restrict to voxels where the asymmetry statistic is actually defined
+    # (non-zero). The map is zero outside the patient-valid gray matter; if
+    # those zeros are included, the half-normal noise estimate below collapses
+    # (median -> 0, sigma_noise -> 0) and the method spuriously returns nothing.
+    quality = d.bilateral_quality_mask() & (d.abs_ai > 0)
     vals = d.abs_ai[quality]
     n = len(vals)
     if n < 20:
@@ -243,7 +249,9 @@ def m3_fdr(d):
 
 def m4_bonferroni(d):
     """M4 — Bonferroni correction."""
-    quality = d.bilateral_quality_mask()
+    # Non-zero restriction: see m3_fdr — including zero (no-data) voxels
+    # collapses the half-normal noise estimate and forces a zero result.
+    quality = d.bilateral_quality_mask() & (d.abs_ai > 0)
     vals = d.abs_ai[quality]
     n = len(vals)
     if n < 20:
@@ -323,7 +331,10 @@ def m6_grf(d):
 
 def m7_permutation(d):
     """M7 — Permutation test / null-distribution cluster correction."""
-    quality = d.bilateral_quality_mask()
+    # Non-zero restriction: the cluster-defining threshold (85th percentile)
+    # and the permutation null are otherwise dominated by zero (no-data)
+    # voxels, which collapses the observed-vs-null contrast.
+    quality = d.bilateral_quality_mask() & (d.abs_ai > 0)
     vals = d.abs_ai[quality]
     n_quality = len(vals)
     if n_quality == 0:

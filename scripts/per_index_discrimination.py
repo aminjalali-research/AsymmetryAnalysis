@@ -8,11 +8,13 @@ across the 37 bilateral region pairs using magnitude-weighted self-weighting:
     S(patient) = sum_i (A_i * |A_i|) / sum_i |A_i|
 
 Then run ROC analysis against MDT ground truth (Left = positive class) for both
-the unilateral-only (n=12) and unilateral + bilateral-dominant (n=14) configurations.
+the unilateral-only (L vs R, n=13) and full-cohort (L vs {R,B,U}, n=17)
+configurations. (Cohort updated 2026-06: 17 analyzable patients per
+ez_ground_truth.py — P014 excluded, P028/P029/P030 added.)
 
 Writes:
-  ez_analysis_mdt/per_index_performance_exclude.csv   (n=12)
-  ez_analysis_mdt/per_index_performance_dominant.csv  (n=14)
+  ez_analysis_mdt/per_index_performance_exclude.csv   (n=13, unilateral only)
+  ez_analysis_mdt/per_index_performance_dominant.csv  (n=17, full cohort)
 """
 from __future__ import annotations
 
@@ -109,8 +111,14 @@ def youden_optimal_threshold(y_true: np.ndarray, scores: np.ndarray) -> float:
 
 def evaluate_configuration(include_bilateral: bool, output_csv: Path) -> None:
     if include_bilateral:
-        # B-L counts as Left, B-R counts as Right; B (no-dominance) excluded.
-        label_map = {"L": 1, "R": 0, "B-L": 1, "B-R": 0}
+        # 2026-06 cohort: authoritative ez_ground_truth uses L/R/B/U (the old
+        # B-L / B-R dominant-side labels no longer exist). To stay consistent
+        # with 05_roi_discrimination.py's "dominant" configuration — which maps
+        # every non-Left case (R, B, U) to the negative class — bilateral (B)
+        # and unclear (U) patients are pooled into Right (0). This yields the
+        # full n=17 cohort; the n=13 unilateral-only run is the clean L-vs-R
+        # comparison.
+        label_map = {"L": 1, "R": 0, "B": 0, "U": 0}
     else:
         label_map = {"L": 1, "R": 0}
 

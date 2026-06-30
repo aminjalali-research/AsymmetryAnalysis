@@ -25,10 +25,33 @@ from scipy import ndimage
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import pandas as _pd  # noqa: E402
 from src.thresholding import AsymData, METHOD_REGISTRY  # noqa: E402
+from ez_ground_truth import EZ_GROUND_TRUTH  # noqa: E402
 
-PATIENTS = ["P013", "P014", "P015", "P020", "P026"]
-GROUP = "F_20_39"
+# 2026-06 cohort: 17 analyzable patients (ez_ground_truth), each age-matched to
+# a sex-pooled FM control band. P014 excluded; P028/P029/P030 added.
+PATIENTS = sorted(EZ_GROUND_TRUTH)
+FM_BANDS = [("FM_20_39", 20, 39), ("FM_40_59", 40, 59), ("FM_60_79", 60, 79)]
+
+
+def patient_band(pid: str) -> str | None:
+    """Resolve a patient's FM control band from age in clinical_spreadsheet.xlsx."""
+    df = _pd.read_excel(ROOT / "clinical_spreadsheet.xlsx")
+    df.columns = [c.strip().upper() for c in df.columns]
+    id_col = [c for c in df.columns if "ID" in c][0]
+    age_col = [c for c in df.columns if "AGE" in c][0]
+    for _, row in df.iterrows():
+        rid = str(row[id_col]).strip()
+        if rid.startswith("sub-"):
+            rid = rid[4:]
+        if rid != pid:
+            continue
+        age = int(row[age_col])
+        for band, lo, hi in FM_BANDS:
+            if lo <= age <= hi:
+                return band
+    return None
 
 
 def load_zai(pid: str) -> np.ndarray:
@@ -36,12 +59,22 @@ def load_zai(pid: str) -> np.ndarray:
                     f"{pid}_asymmetry_zscore.nii.gz").get_fdata()
 
 
-def load_brain_mask() -> np.ndarray:
-    return nib.load(ROOT / "results_zscore" / "groups" / GROUP / "brain_mask.nii.gz").get_fdata() > 0
+def load_brain_mask(group: str) -> np.ndarray:
+    return nib.load(ROOT / "results_zscore" / "asymmetry" / "groups" / group /
+                    "brain_mask.nii.gz").get_fdata() > 0
+
+
+SYM_MODE = "--sym" in sys.argv
 
 
 def load_perfusion(pid: str) -> np.ndarray | None:
-    p = ROOT / "Dataset" / pid / f"{pid}_perfusion_calib_resampled_to_T1w.nii.gz"
+    # In symmetric-space mode the zAI maps live in the symmetric template space,
+    # so the perfusion that quality-weighted methods (M2/M11/M12/M13) consume
+    # must be the symmetric-registered perfusion to stay spatially aligned.
+    if SYM_MODE:
+        p = ROOT / "symreg" / "sym_perf" / f"{pid}_perf_sym.nii.gz"
+    else:
+        p = ROOT / "Dataset" / pid / f"{pid}_perfusion_calib_resampled_to_T1w.nii.gz"
     if not p.exists():
         return None
     return nib.load(p).get_fdata()
@@ -72,19 +105,40 @@ def run_all_methods(d: AsymData, brain_n: int) -> dict[str, dict]:
 
 
 def main() -> None:
-    brain_mask = load_brain_mask()
-    brain_n = int(brain_mask.sum())
-
     rows: list[dict] = []
     diagnostics: list[str] = [
-        f"Brain mask voxels: {brain_n:,}",
-        f"Patients: {PATIENTS}",
+        f"Patients (cohort n={len(PATIENTS)}): {PATIENTS}",
         "",
     ]
 
+    mask_cache: dict[str, np.ndarray] = {}
+    processed = 0
     for pid in PATIENTS:
+        zai_path = (ROOT / "results_zscore" / "asymmetry" / "patients" / pid /
+                    f"{pid}_asymmetry_zscore.nii.gz")
+        if not zai_path.exists():
+            diagnostics.append(f"=== {pid} === SKIP (zAI map PENDING REBUILD)")
+            diagnostics.append("")
+            continue
+        band = patient_band(pid)
+        if band is None:
+            diagnostics.append(f"=== {pid} === SKIP (no age band)")
+            diagnostics.append("")
+            continue
+        if band not in mask_cache:
+            mp = (ROOT / "results_zscore" / "asymmetry" / "groups" / band /
+                  "brain_mask.nii.gz")
+            if not mp.exists():
+                diagnostics.append(f"=== {pid} === SKIP (band {band} mask missing)")
+                diagnostics.append("")
+                continue
+            mask_cache[band] = load_brain_mask(band)
+        brain_mask = mask_cache[band]
+        brain_n = int(brain_mask.sum())
+
         zai = load_zai(pid)
         perf = load_perfusion(pid)
+        processed += 1
 
         # AsymData treats the input as a signed AI map and internally
         # computes |ai| and a re-z-score within the brain. When the input
@@ -93,7 +147,7 @@ def main() -> None:
         # standardisation of zAI, which is what M1 and M5 see.
         d = AsymData(zai, brain_mask, perfusion=perf)
 
-        diagnostics.append(f"=== {pid} ===")
+        diagnostics.append(f"=== {pid} (band {band}, brain_n={brain_n:,}) ===")
         diagnostics.append(f"  zAI: min={zai.min():.2f} max={zai.max():.2f} "
                            f"mean={zai[brain_mask].mean():.3f} std={zai[brain_mask].std():.3f}")
         diagnostics.append(f"  |zAI| (abs_ai): max={d.abs_ai[brain_mask].max():.2f} "
@@ -103,7 +157,7 @@ def main() -> None:
 
         results = run_all_methods(d, brain_n)
         for name, m in results.items():
-            rows.append({"patient_id": pid, "method": name, **m})
+            rows.append({"patient_id": pid, "group": band, "method": name, **m})
             diagnostics.append(
                 f"  {name:24s} n_voxels={m['n_voxels']:>7}  "
                 f"coverage={m['coverage_pct']:>5.2f}%  "
@@ -112,7 +166,14 @@ def main() -> None:
             )
         diagnostics.append("")
 
-    df = pd.DataFrame(rows)[["patient_id", "method", "n_voxels", "coverage_pct", "n_clusters"]]
+    if not rows:
+        print("No zAI maps available yet — rerun after the zAI rebuild completes.")
+        diag_path = ROOT / "ez_analysis_mdt" / "thresholding_diagnostics.txt"
+        diag_path.parent.mkdir(parents=True, exist_ok=True)
+        diag_path.write_text("\n".join(diagnostics))
+        return
+    print(f"Processed {processed}/{len(PATIENTS)} patients with zAI maps present.")
+    df = pd.DataFrame(rows)[["patient_id", "group", "method", "n_voxels", "coverage_pct", "n_clusters"]]
     out_csv = ROOT / "results_zscore" / "asymmetry" / "summary" / "all_patients_method_summary.csv"
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_csv, index=False)

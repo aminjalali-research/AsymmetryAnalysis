@@ -112,19 +112,53 @@ below).
 All bands include the cluster count and voxel total in the report's
 rationale line so the surgeon can see how the algorithm got there.
 
-## Polarity flip (zAI sign → EZ side)
+## Side prediction: direction-of-abnormality inference (2026-05-06)
 
-The `direction` field in the cluster report records the sign of the zAI:
-- `direction = left-dominant` (positive zAI) — the LEFT hemisphere is
-  abnormally MORE perfused than the RIGHT. In an interictal ASL study
-  this corresponds to **right-hemisphere hypoperfusion**, so the
-  predicted EZ side is **R**.
-- `direction = right-dominant` (negative zAI) — the RIGHT is abnormally
-  more perfused than the LEFT, so the predicted EZ side is **L**.
+The previous version of this section described a *polarity flip* rule
+that implicitly assumed every surviving asymmetry was driven by
+contralateral hypoperfusion. As of 2026-05-06 this rule is replaced by
+**direction-of-abnormality inference**, which uses per-side perfusion
+z-scores against controls to determine the predicted EZ side
+explicitly.
 
-This flip is applied per-cluster before the lobar aggregation. The
-report's lobe-level table is keyed by **predicted EZ side** (post-flip),
-not by the cluster's anatomical hemisphere.
+For each surviving cluster, `02_compute_zai.py` now writes five
+additional CSV columns:
+
+| Column | Meaning |
+|---|---|
+| `cluster_hemi` | "L" or "R" — physical hemisphere of the cluster (from MNI x sign of the centroid) |
+| `z_perf_cluster_side` | Median per-voxel perfusion z (vs controls) at cluster voxels |
+| `z_perf_mirror_side` | Median per-voxel perfusion z at the mirrored (contralateral) cluster voxels |
+| `direction_class` | "hyper" / "hypo" / "mixed" / "subtle" |
+| `ez_side_pred` | Predicted EZ side, "L" or "R" — always the deviating side |
+
+The classification rule (default `z_thr = 2.0`):
+
+- **cluster side deviates, mirror normal** → EZ = cluster side; direction = hyper if `z_perf_cluster_side ≥ +z_thr` else hypo
+- **mirror deviates, cluster normal** → EZ = mirror side; direction = hyper or hypo analogously
+- **both sides deviate** → `direction_class = mixed`; EZ = side with larger `|z_perf|`
+- **neither side deviates strongly** → `direction_class = subtle`; EZ = side with larger `|z_perf|`, low confidence
+
+**Key principle.** The EZ side is always the *deviating* side, regardless
+of whether the deviation is hyperperfusion or hypoperfusion. Direction
+(hyper vs hypo) is metadata about the underlying mechanism (interictal
+hypometabolism vs. FCD-II / post-ictal active hyperperfusion) — not a
+side-flipping switch.
+
+**Why this replaced polarity flip.** ~40% of FCD lesions in pediatric
+ASL are hyperperfused rather than hypoperfused (Ferrari et al. 2024,
+doi:10.1038/s41598-024-58352-9), and post-ictal imaging within minutes
+of a seizure shows ipsilateral hyperperfusion that transitions to
+hypoperfusion by ~1 hour (Sierra-Marcos et al. 2017,
+doi:10.1093/brain/awx241; Shimogawa et al. 2017). A polarity-flip rule
+that assumes hypoperfusion will systematically mis-classify the
+hyperperfused subset.
+
+**Legacy fallback.** `06_clinical_interpretation.py` checks for the
+`ez_side_pred` column. When the column is missing (older 11-column
+CSVs predating the upgrade), the script falls back to the polarity-flip
+rule. To get direction-aware side predictions, regenerate the cluster
+report by running `02_compute_zai.py` against the current code.
 
 ## How to interpret concordance against MDT
 
@@ -148,15 +182,28 @@ concordance rather than single-modality dominance.
 
 ## Cohort-level expectation
 
-For the 5 patients with zAI data on disk at the time of canonical
-write-up (P013, P014, P015, P020, P026):
+For the 5 patients with zAI data on disk under the direction-aware
+rule (2026-05-06 cohort run; P013, P014, P015, P020, P026):
 
-- 4/5 algorithm-MDT concordance at default thresholds
-- 1/5 disagreement (P013) — MTL voxel count is essentially balanced
-  (1.09× ratio favouring R-side aggregation, MDT label = L). This is
-  the kind of "single-modality-only-just" case the multi-modal reminder
-  is designed for. Stricter thresholds (e.g. `--peak-threshold 5.0`)
-  push P013 into the `Bilateral` / `Unclear` band rather than into a
+- **3/5 algorithm-MDT concordance** at default thresholds:
+  - P014: predicted R, MDT=R (AGREE; hypo-dominant 292/440 clusters)
+  - P020: predicted L, MDT=L (AGREE; hypo-dominant 146/476)
+  - P026: predicted L, MDT=L (AGREE; hypo-dominant 185/438)
+- **2/5 disagreement:**
+  - P013: predicted R, MDT=L (DISAGREE; remote occipital + frontal
+    clusters dominate the mesial-temporal target — the regional
+    heterogeneity / mesial-structure sensitivity gap reported by Han
+    et al. 2026 for SEEG-validated PET Z-maps)
+  - P015: predicted R, MDT=L (DISAGREE; **198 hyper / 82 hypo
+    clusters** — a hyperperfusion-dominant phenotype consistent with
+    FCD-II or recent-seizure / post-ictal physiology). Notable: under
+    the previous polarity-flip rule P015 was predicted L (apparently
+    concordant), but that prediction relied on the hypoperfusion-only
+    assumption which is empirically falsified for P015 by the per-side
+    perfusion data. The direction-aware re-classification is more
+    honest, not a regression.
+
+Stricter thresholds (e.g. `--peak-threshold 5.0`) push borderline cases
   false R prediction.
 
 ## Cross-references

@@ -51,6 +51,15 @@ PATIENT_DATASET_DIR = BASE_DIR / "Dataset"
 OUTPUT_DIR = BASE_DIR / "results_zscore"
 CLINICAL_SPREADSHEET = BASE_DIR / "clinical_spreadsheet.xlsx"
 
+# Symmetric-space mode (2026-06-22 zAI over-dispersion fix). When enabled,
+# perfusion and parcellation are read from the left-right symmetric template
+# space produced by symreg/reg_subject.sh (flirt+fnirt onto a flip-symmetric
+# T1 template), so the voxel mirror-AI in 02_compute_zai.py compares
+# anatomically homologous voxels. Output paths are unchanged: symmetric space
+# becomes the new canonical (original-space outputs archived separately).
+SYM_MODE = False
+SYM_DIR = BASE_DIR / "symreg" / "sym_perf"
+
 # ============================================================================
 # GROUP DEFINITIONS  –  extend as new controls arrive
 # ============================================================================
@@ -92,25 +101,34 @@ GROUP_DEFINITIONS = {
         "age_range": (60, 79),
         "description": "Males aged 60-79",
     },
+    # Thesis comparator groups (Rai 2026, Table 10): 3 sex-pooled 20-year bands,
+    # n=60 each. The new HCP-Aging/Development controls live FLAT under these dirs
+    # (DatasetControls/FM_20_39/<ID>/ ...), so each group reads a single subdir.
     "FM_20_39": {
-        "subdirs": ["20_29F", "30_39F", "20_29M", "30_39M"],
+        "subdirs": ["FM_20_39"],
         "sex": "FM",
         "age_range": (20, 39),
-        "description": "All subjects aged 20-39",
+        "description": "All subjects aged 20-39 (n=60, thesis Group 1)",
     },
     "FM_40_59": {
-        "subdirs": ["40_49F", "50_59F", "40_49M", "50_59M"],
+        "subdirs": ["FM_40_59"],
         "sex": "FM",
         "age_range": (40, 59),
-        "description": "All subjects aged 40-59",
+        "description": "All subjects aged 40-59 (n=60, thesis Group 2)",
     },
     "FM_60_79": {
-        "subdirs": ["60_69F", "70_79F", "60_69M", "70_79M"],
+        "subdirs": ["FM_60_79"],
         "sex": "FM",
         "age_range": (60, 79),
-        "description": "All subjects aged 60-79",
+        "description": "All subjects aged 60-79 (n=60, thesis Group 3)",
     },
 }
+
+# NOTE: the sex-specific F_*/M_* groups above point at per-sex decade dirs
+# (e.g. 20_29F) that are NOT present in the current dataset — the new controls
+# are stored sex-pooled. Those groups are therefore reported as "unavailable"
+# (discover_subjects skips missing subdirs). A sex-specific sensitivity analysis
+# would require per-control sex labels to split the FM_* dirs.
 
 # ============================================================================
 # FreeSurfer region names  (from voxel_roi_extraction.py)
@@ -204,6 +222,11 @@ class ControlGroupBuilder:
     @staticmethod
     def _find_perfusion_file(subject_dir):
         """Return path to the MNI-space upsampled perfusion NIfTI."""
+        if SYM_MODE:
+            p = SYM_DIR / f"{subject_dir.name}_perf_sym.nii.gz"
+            if not p.exists():
+                raise FileNotFoundError(f"No symmetric perfusion for {subject_dir.name}: {p}")
+            return p
         candidates = list(subject_dir.glob("*_MNISpace_perfusion_calib_upsampled.nii.gz"))
         if len(candidates) == 1:
             return candidates[0]
@@ -218,6 +241,11 @@ class ControlGroupBuilder:
     @staticmethod
     def _find_parcellation_file(subject_dir):
         """Return path to the aparc+aseg NIfTI."""
+        if SYM_MODE:
+            p = SYM_DIR / f"{subject_dir.name}_aparc_sym.nii.gz"
+            if not p.exists():
+                raise FileNotFoundError(f"No symmetric aparc for {subject_dir.name}: {p}")
+            return p
         parc = subject_dir / "aparc+aseg.nii.gz"
         if parc.exists():
             return parc
@@ -507,6 +535,11 @@ class PatientZScoreAnalyzer:
     @staticmethod
     def _find_patient_perfusion(patient_dir):
         """Find the patient's perfusion NIfTI (resampled-to-T1w, actually MNI)."""
+        if SYM_MODE:
+            p = SYM_DIR / f"{patient_dir.name}_perf_sym.nii.gz"
+            if not p.exists():
+                raise FileNotFoundError(f"No symmetric perfusion for {patient_dir.name}: {p}")
+            return p
         candidates = list(patient_dir.glob("*_perfusion_calib_resampled_to_T1w.nii.gz"))
         if len(candidates) == 1:
             return candidates[0]
@@ -804,6 +837,10 @@ class ControlZScoreAnalysis:
             sex_match = gdef["sex"] == "FM" or gdef["sex"] == demo["sex"]
             age_match = lo <= demo["age"] <= hi
             if sex_match and age_match:
+                # In symmetric-space mode, skip patients without a registered
+                # symmetric perfusion (e.g. P014, excluded from the cohort).
+                if SYM_MODE and not (SYM_DIR / f"{pid}_perf_sym.nii.gz").exists():
+                    continue
                 matched.append(pid)
         return sorted(matched)
 
@@ -906,10 +943,13 @@ class ControlZScoreAnalysis:
 # ============================================================================
 
 def main():
-    global ZSCORE_THRESHOLD, MIN_CLUSTER_SIZE
+    global ZSCORE_THRESHOLD, MIN_CLUSTER_SIZE, SYM_MODE
 
     parser = argparse.ArgumentParser(
         description="Voxel-wise z-score comparison: patients vs age/sex-matched controls")
+    parser.add_argument("--sym", action="store_true",
+                        help="Use left-right symmetric-template-registered perfusion/parcellation "
+                             "(symreg/sym_perf/) — required for the corrected voxel mirror-AI.")
     parser.add_argument("--patient", "-p", type=str, default=None,
                         help="Process a single patient (e.g., P013)")
     parser.add_argument("--group", "-g", type=str, default=None,
@@ -926,6 +966,9 @@ def main():
         ZSCORE_THRESHOLD = args.threshold
     if args.min_cluster is not None:
         MIN_CLUSTER_SIZE = args.min_cluster
+    SYM_MODE = args.sym
+    if SYM_MODE:
+        print("  [SYM] Using symmetric-template-registered inputs from symreg/sym_perf/")
 
     pipeline = ControlZScoreAnalysis(
         group_key=args.group,

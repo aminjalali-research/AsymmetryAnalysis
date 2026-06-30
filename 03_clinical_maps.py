@@ -78,8 +78,23 @@ CLUSTER_CONNECTIVITY = 2
 
 BASE_DIR = Path(__file__).parent
 RESULTS_DIR = BASE_DIR / "results_zscore"
-GROUP_KEY = "F_20_39"
+GROUP_KEY = "FM_20_39"   # fallback only; the band is resolved PER PATIENT below
 GROUP_DIR = RESULTS_DIR / "groups" / GROUP_KEY
+
+
+def resolve_patient_group(pid):
+    """Resolve the age-matched control band for a patient from the per-patient
+    z-map filename written by 01_build_control_normative.py
+    (``<pid>_vs_<GROUP>_zscore.nii.gz``). Falls back to GROUP_KEY. This avoids
+    silently referencing a single fixed (and possibly stale) control group for
+    patients matched to different FM_* bands."""
+    zdir = RESULTS_DIR / "patients" / pid
+    if zdir.exists():
+        for c in sorted(zdir.glob(f"{pid}_vs_*_zscore.nii.gz")):
+            stem = c.name[len(f"{pid}_vs_"):-len("_zscore.nii.gz")]
+            if stem:
+                return stem
+    return GROUP_KEY
 # zAI inputs come from 02_compute_zai.py:
 #   results_zscore/asymmetry/patients/{pid}/{pid}_asymmetry_zscore.nii.gz
 ZAI_PATIENTS_DIR = RESULTS_DIR / "asymmetry" / "patients"
@@ -105,6 +120,12 @@ CLINICAL_SUBCORTICAL_LABELS = [10, 49, 17, 53, 18, 54]
 CLINICAL_CORTICAL_LABELS = list(range(1001, 1036)) + list(range(2001, 2036))
 CLINICAL_ROI_LABELS = set(CLINICAL_SUBCORTICAL_LABELS) | set(CLINICAL_CORTICAL_LABELS)
 DATASET_DIR = BASE_DIR / "Dataset"
+
+# Symmetric-space mode (2026-06-22 zAI fix): the zAI maps are now built in the
+# left-right symmetric template space, so the per-patient clinical-ROI mask must
+# use the symmetric-space parcellation (symreg/sym_perf/{pid}_aparc_sym.nii.gz).
+SYM_MODE = False
+SYM_DIR = BASE_DIR / "symreg" / "sym_perf"
 
 REGION_NAMES = {
     10: "L-Thalamus", 49: "R-Thalamus",
@@ -184,7 +205,10 @@ def _build_clinical_roi_mask(patient_id, ref_shape=None, ref_affine=None):
     np.ndarray of bool with shape == parcellation.shape, or None if the
     file is missing.
     """
-    parc_path = DATASET_DIR / patient_id / "aparc+aseg.nii.gz"
+    if SYM_MODE:
+        parc_path = SYM_DIR / f"{patient_id}_aparc_sym.nii.gz"
+    else:
+        parc_path = DATASET_DIR / patient_id / "aparc+aseg.nii.gz"
     if not parc_path.exists():
         print(f"  ! Cannot build clinical ROI mask for {patient_id}: "
               f"{parc_path} not found.")
@@ -634,11 +658,14 @@ def plot_clinical_montage(patient_id, mean_img, brain_mask, gm_mask, affine):
 
 
 def main():
-    global CLINICAL_ZAI_THRESHOLD, CLINICAL_MIN_CLUSTER
+    global CLINICAL_ZAI_THRESHOLD, CLINICAL_MIN_CLUSTER, SYM_MODE
 
     parser = argparse.ArgumentParser(
         description="Generate clinical-grade zAI maps "
                     "(default: 37-ROI clinical mask)")
+    parser.add_argument("--sym", action="store_true",
+                        help="zAI maps are in symmetric-template space; use the "
+                             "symmetric per-patient parcellation for the clinical ROI mask.")
     parser.add_argument("--patient", "-p", type=str, default=None)
     parser.add_argument("--threshold", "-t", type=float, default=CLINICAL_ZAI_THRESHOLD,
                         help=f"zAI threshold (default: {CLINICAL_ZAI_THRESHOLD})")
@@ -657,6 +684,9 @@ def main():
 
     CLINICAL_ZAI_THRESHOLD = args.threshold
     CLINICAL_MIN_CLUSTER = args.min_cluster
+    SYM_MODE = args.sym
+    if SYM_MODE:
+        print("  [SYM] Using symmetric-space per-patient parcellation for clinical ROI mask")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("\n" + "=" * 70)
@@ -679,19 +709,7 @@ def main():
     else:
         print(f"  Tissue:       Cortical + subcortical gray matter only "
               f"(--no-clinical-mask)")
-    print(f"  Group:        {GROUP_KEY}")
-
-    # Load group data
-    mean_img = nib.load(str(GROUP_DIR / "mean_perfusion.nii.gz")).get_fdata(dtype=np.float32)
-    brain_mask = nib.load(str(GROUP_DIR / "brain_mask.nii.gz")).get_fdata().astype(bool)
-    parc = nib.load(str(GROUP_DIR / "consensus_parcellation.nii.gz")).get_fdata().astype(np.int32)
-    ref_img = nib.load(str(GROUP_DIR / "mean_perfusion.nii.gz"))
-    affine = ref_img.affine
-
-    gm_mask = build_gray_matter_mask(parc)
-    n_gm = int((brain_mask & gm_mask).sum())
-    n_brain = int(brain_mask.sum())
-    print(f"  Gray matter:  {n_gm:,} voxels ({100*n_gm/n_brain:.0f}% of brain mask)")
+    print(f"  Group:        resolved per-patient (age-matched FM_* band)")
 
     # Find patients with zAI maps available
     if args.patient:
@@ -712,6 +730,19 @@ def main():
     all_summaries = []
 
     for pid in patients:
+        # Resolve + load THIS patient's age-matched control band (not a fixed
+        # group) so 40-59 / 60-79 patients are not referenced against FM_20_39.
+        group = resolve_patient_group(pid)
+        gdir = RESULTS_DIR / "groups" / group
+        if not (gdir / "consensus_parcellation.nii.gz").exists():
+            print(f"  ⚠ {pid}: control band '{group}' not found at {gdir}; skipping.")
+            continue
+        mean_img = nib.load(str(gdir / "mean_perfusion.nii.gz")).get_fdata(dtype=np.float32)
+        brain_mask = nib.load(str(gdir / "brain_mask.nii.gz")).get_fdata().astype(bool)
+        parc = nib.load(str(gdir / "consensus_parcellation.nii.gz")).get_fdata().astype(np.int32)
+        affine = nib.load(str(gdir / "mean_perfusion.nii.gz")).affine
+        gm_mask = build_gray_matter_mask(parc)
+        print(f"  [{pid}] band = {group}")
         result = process_patient(
             pid, brain_mask, parc, gm_mask, mean_img,
             affine, CLINICAL_ZAI_THRESHOLD, CLINICAL_MIN_CLUSTER,
