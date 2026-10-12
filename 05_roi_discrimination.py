@@ -22,7 +22,13 @@ import seaborn as sns
 import warnings
 from pathlib import Path
 from scipy import stats
-from sklearn.metrics import roc_curve, auc, confusion_matrix, classification_report
+from sklearn.metrics import (
+    roc_curve,
+    auc,
+    roc_auc_score,
+    confusion_matrix,
+    classification_report,
+)
 
 # Import ground truth labels
 from ez_ground_truth import (
@@ -363,16 +369,23 @@ class EZDiscriminatorMDT:
     # EVALUATION
     # ==========================================================================
 
-    def evaluate_methods(self, include_bilateral="dominant"):
+    def evaluate_methods(self, include_bilateral="exclude"):
         """
-        Evaluate all methods against ground truth
+        Evaluate all left-vs-right methods against ground truth.
 
         Args:
-            include_bilateral: How to handle bilateral cases
-                - "exclude": Only use unilateral cases
-                - "dominant": Include B-L as L, B-R as R, exclude pure B
-                - "all_left": Treat all bilateral as L
-                - "all_right": Treat all bilateral as R
+            include_bilateral: How to handle bilateral (B) / unclear (U) cases.
+                - "exclude": only unilateral cases (n=13). This is the only
+                  defensible setting for L-vs-R discrimination and is the default.
+                - "left" / "right": force every B/U case to one side. Sensitivity
+                  analysis only; these labels are not clinical ground truth.
+
+                A "dominant" option previously existed here. It was removed: the
+                string matched no branch in get_ez_label(), which fell through and
+                returned raw 'B'/'U', and the binary cast below then silently
+                labelled all four B/U patients as RIGHT — contradicting the ictal
+                evidence for P019/P020, which points Left. Score B/U cases with
+                evaluate_bilateral_magnitude() instead.
         """
         print("\n" + "=" * 80)
         print(f"🔬 EZ DISCRIMINATION ANALYSIS (MDT Labels)")
@@ -583,31 +596,107 @@ class EZDiscriminatorMDT:
 
         return results_df, all_scores, patient_ids, y_true
 
+    def evaluate_bilateral_magnitude(self, n_boot=10000, seed=20260714):
+        """
+        Score bilateral/unclear cases on asymmetry MAGNITUDE, not side.
+
+        A bilateral EZ makes both hemispheres abnormal, so the signed L-R
+        difference partially cancels and |AI| should be LOW; a unilateral EZ should
+        give HIGH |AI|. This is the question the B/U cases can actually answer, and
+        it needs no fabricated side label.
+
+        Labels: 1 = non-unilateral (B or U, n=4), 0 = unilateral (L or R, n=13).
+        Scored as -magnitude, so AUC > 0.5 means low magnitude predicts bilateral.
+
+        Severely underpowered at n=4; reported as hypothesis-generating only.
+        Writes bilateral_magnitude_performance.csv.
+        """
+        print("\n" + "=" * 80)
+        print("🔬 BILATERAL DETECTION VIA ASYMMETRY MAGNITUDE (direction-blind)")
+        print("=" * 80)
+
+        pids, raw = [], []
+        for pid in self.asymmetry_data:
+            if pid not in EZ_GROUND_TRUTH:
+                continue
+            pids.append(pid)
+            raw.append(get_ez_label(pid))  # raw label, no side forced
+
+        y = np.array([1 if lab in ("B", "U") else 0 for lab in raw])
+        n_uni, n_bu = int((y == 0).sum()), int(y.sum())
+        print(f"\n📊 {len(y)} patients: {n_uni} unilateral vs {n_bu} bilateral/unclear")
+        if n_bu < 2 or n_uni < 2:
+            print("❌ Not enough of each class")
+            return None
+
+        metrics = {
+            "mean_abs_li": lambda df: np.mean(np.abs(df["laterality_index"].values)),
+            "max_abs_li": lambda df: np.max(np.abs(df["laterality_index"].values)),
+            "weighted_aai": self.weighted_aai,
+            "n_regions_over_thr": lambda df: float(
+                np.sum(np.abs(df["laterality_index"].values) > 0.05)
+            ),
+        }
+
+        rng = np.random.default_rng(seed)
+        idx_bu, idx_uni = np.flatnonzero(y == 1), np.flatnonzero(y == 0)
+        boot_idx = np.concatenate(
+            [
+                rng.choice(idx_bu, (n_boot, len(idx_bu)), replace=True),
+                rng.choice(idx_uni, (n_boot, len(idx_uni)), replace=True),
+            ],
+            axis=1,
+        )
+
+        rows = []
+        for name, fn in metrics.items():
+            vals = np.array([fn(self.asymmetry_data[p]) for p in pids], float)
+            auc_val = roc_auc_score(y, -vals)  # low magnitude -> bilateral
+            boot = np.array([roc_auc_score(y[i], -vals[i]) for i in boot_idx])
+            rows.append(
+                {
+                    "metric": name,
+                    "auc": auc_val,
+                    "ci_low": np.percentile(boot, 2.5),
+                    "ci_high": np.percentile(boot, 97.5),
+                    "frac_at_or_below_chance": float((boot <= 0.5).mean()),
+                    "mean_unilateral": vals[y == 0].mean(),
+                    "mean_bilateral_unclear": vals[y == 1].mean(),
+                    "n_unilateral": n_uni,
+                    "n_bilateral_unclear": n_bu,
+                }
+            )
+
+        df = pd.DataFrame(rows).sort_values("auc", ascending=False)
+        for r in df.itertuples():
+            print(
+                f"   {r.metric:20s} AUC={r.auc:.3f} [{r.ci_low:.2f}, {r.ci_high:.2f}]  "
+                f"uni={r.mean_unilateral:.4f} vs B/U={r.mean_bilateral_unclear:.4f}"
+            )
+        print("\n   ⚠️  n=4 bilateral/unclear — hypothesis-generating only.")
+
+        df.to_csv(self.output_dir / "bilateral_magnitude_performance.csv", index=False)
+        return df
+
     def run_all_analyses(self):
-        """Run analysis with different bilateral handling strategies"""
+        """Run the unilateral L-vs-R analysis plus the bilateral magnitude probe."""
 
         self.load_data()
 
         all_results = {}
 
-        # Analysis 1: Unilateral only
+        # Analysis 1: Unilateral only — the only defensible L-vs-R cohort
         print("\n" + "🔹" * 40)
-        print("ANALYSIS 1: UNILATERAL CASES ONLY")
+        print("ANALYSIS 1: UNILATERAL CASES ONLY (n=13)")
         print("🔹" * 40)
         results1 = self.evaluate_methods(include_bilateral="exclude")
         if results1:
             all_results["unilateral_only"] = results1[0]
 
-        # Analysis 2: Include bilateral with dominant side
-        print("\n" + "🔹" * 40)
-        print("ANALYSIS 2: INCLUDING BILATERAL (DOMINANT SIDE)")
-        print("🔹" * 40)
-        results2 = self.evaluate_methods(include_bilateral="dominant")
-        if results2:
-            all_results["with_bilateral_dominant"] = results2[0]
-
-        # Analysis 3: Include all bilateral as uncertain (exclude pure B)
-        # This is same as dominant since we only have B-L and B-R with clear dominance
+        # Analysis 2: bilateral/unclear scored on magnitude, not a forced side.
+        # (Replaces the former "dominant side" pooling, which mislabelled all four
+        #  B/U patients as Right — see evaluate_methods docstring.)
+        self.evaluate_bilateral_magnitude()
 
         # Generate comparison plot
         self.plot_comparison(all_results)

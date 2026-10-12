@@ -98,10 +98,9 @@ EZ_GROUND_TRUTH = {
     },
     "P027": {
         "ez": "R", "thesis_id": 14, "thesis_dx": "RTLE", "confidence": "Moderate",
-        "evidence": "MRI: R temporal lobe smaller, possible PMG superior R temporal/supramarginal "
-                    "(research MRI normal) | 2022 EMU: generalized spike-wave, R temporal maximal "
-                    "(interictal), 3 R temporal seizures (ictal); 2024 EMU: intermittent right>>left "
-                    "temporal slowing, 3 R temporal seizures | Neuropsych: non-localizing",
+        "evidence": "MRI: reported normal; on review prominence of R entorhinal cortex, flattened R "
+                    "hippocampus (research MRI normal) | EMU: R temporal (interictal); R mid-posterior "
+                    "temporal seizure (ictal) | Neuropsych: non-localizing",
     },
     # ===== BILATERAL (thesis BTLE) =====
     "P019": {
@@ -173,9 +172,30 @@ def get_ez_label(patient_id, include_bilateral_as=None):
             - 'left'    : treat bilateral/unclear as Left
             - 'right'   : treat bilateral/unclear as Right
 
+        NOTE: there is deliberately no 'dominant' option. The MDT declined to
+        lateralize these four Low-confidence cases, no dominant side is encoded
+        anywhere in EZ_GROUND_TRUTH (the evidence strings conflict: P019/P020
+        point Left on ictal counts, P021 Right, P018 is L-imaging/R-EEG), and
+        assigning one would manufacture ground truth. Use 'exclude' for
+        left-vs-right discrimination; score B/U cases on asymmetry MAGNITUDE
+        instead (see 05_roi_discrimination.py::evaluate_bilateral_magnitude).
+
     Returns:
         str 'L'/'R'/'B'/'U', or None.
+
+    Raises:
+        ValueError: if include_bilateral_as is not a recognised option. This is
+            deliberate: an earlier caller passed 'dominant', which fell through
+            to `return ez` and silently labelled every B/U case as Right.
     """
+    valid = (None, "exclude", "left", "right")
+    if include_bilateral_as not in valid:
+        raise ValueError(
+            f"include_bilateral_as={include_bilateral_as!r} is not supported; "
+            f"expected one of {valid}. Non-unilateral cases cannot be assigned a "
+            f"side from the MDT record — see this function's docstring."
+        )
+
     if patient_id not in EZ_GROUND_TRUTH:
         return None
 
@@ -184,11 +204,7 @@ def get_ez_label(patient_id, include_bilateral_as=None):
         return ez
     if include_bilateral_as == "exclude":
         return None
-    if include_bilateral_as == "left":
-        return "L"
-    if include_bilateral_as == "right":
-        return "R"
-    return ez
+    return "L" if include_bilateral_as == "left" else "R"
 
 
 def get_unilateral_patients():

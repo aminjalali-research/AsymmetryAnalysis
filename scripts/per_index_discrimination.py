@@ -7,14 +7,20 @@ across the 37 bilateral region pairs using magnitude-weighted self-weighting:
 
     S(patient) = sum_i (A_i * |A_i|) / sum_i |A_i|
 
-Then run ROC analysis against MDT ground truth (Left = positive class) for both
-the unilateral-only (L vs R, n=13) and full-cohort (L vs {R,B,U}, n=17)
-configurations. (Cohort updated 2026-06: 17 analyzable patients per
-ez_ground_truth.py — P014 excluded, P028/P029/P030 added.)
+Then run ROC analysis against MDT ground truth (Left = positive class) on the
+unilateral cohort (L vs R, n=13). (Cohort updated 2026-06: 17 analyzable patients
+per ez_ground_truth.py — P014 excluded, P028/P029/P030 added.)
+
+A second "dominant" configuration (n=17) was removed on 2026-07-15. It pooled the
+bilateral (B) and unclear (U) cases into Right to mirror 05_roi_discrimination.py's
+"dominant" setting — but that setting was itself a bug: "dominant" matched no branch
+in get_ez_label(), so all four B/U patients were silently labelled Right, against the
+ictal evidence for P019/P020, which points Left. Neither script assigns these cases a
+side any more; they are scored on asymmetry magnitude instead
+(05_roi_discrimination.py::evaluate_bilateral_magnitude).
 
 Writes:
   ez_analysis_mdt/per_index_performance_exclude.csv   (n=13, unilateral only)
-  ez_analysis_mdt/per_index_performance_dominant.csv  (n=17, full cohort)
 """
 from __future__ import annotations
 
@@ -109,18 +115,11 @@ def youden_optimal_threshold(y_true: np.ndarray, scores: np.ndarray) -> float:
     return best_thr
 
 
-def evaluate_configuration(include_bilateral: bool, output_csv: Path) -> None:
-    if include_bilateral:
-        # 2026-06 cohort: authoritative ez_ground_truth uses L/R/B/U (the old
-        # B-L / B-R dominant-side labels no longer exist). To stay consistent
-        # with 05_roi_discrimination.py's "dominant" configuration — which maps
-        # every non-Left case (R, B, U) to the negative class — bilateral (B)
-        # and unclear (U) patients are pooled into Right (0). This yields the
-        # full n=17 cohort; the n=13 unilateral-only run is the clean L-vs-R
-        # comparison.
-        label_map = {"L": 1, "R": 0, "B": 0, "U": 0}
-    else:
-        label_map = {"L": 1, "R": 0}
+def evaluate_configuration(output_csv: Path) -> None:
+    # Unilateral only. Bilateral (B) and unclear (U) cases are absent by design:
+    # the MDT declined to lateralize them, so any side assigned here would be
+    # manufactured. See this module's docstring.
+    label_map = {"L": 1, "R": 0}
 
     rows: list[dict] = []
     for col in INDEX_COLUMNS:
@@ -181,9 +180,7 @@ def evaluate_configuration(include_bilateral: bool, output_csv: Path) -> None:
 
 def main() -> None:
     out_dir = ROOT / "ez_analysis_mdt"
-    evaluate_configuration(False, out_dir / "per_index_performance_exclude.csv")
-    print()
-    evaluate_configuration(True, out_dir / "per_index_performance_dominant.csv")
+    evaluate_configuration(out_dir / "per_index_performance_exclude.csv")
 
 
 if __name__ == "__main__":

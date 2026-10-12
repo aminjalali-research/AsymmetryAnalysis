@@ -429,6 +429,13 @@ class ClinicalInterpreter:
             df.loc[mask_empty, "ez_side"] = df.loc[mask_empty, "direction"].map(
                 {"left-dominant": "R", "right-dominant": "L"})
         else:
+            # The asymmetry map is antisymmetric, so each finding appears as a
+            # mirrored pair (left-dominant in one hemisphere, right-dominant at
+            # the mirror). Flipping both members would cast opposite votes that
+            # cancel; keep only the left-hemisphere member (RAS x < 0).
+            xcol = "centroid_x" if "centroid_x" in df.columns else None
+            if xcol is not None:
+                df = df[df[xcol] < 0].copy()
             df["ez_side"] = df["direction"].map({"left-dominant": "R",
                                                   "right-dominant": "L"})
         return df
