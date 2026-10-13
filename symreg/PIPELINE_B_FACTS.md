@@ -36,9 +36,10 @@ because the zAI map is antisymmetric and every finding appears in both hemispher
 - Source: `scripts/clinical_stratified_analysis.py` -> `ez_analysis_mdt/clinical_*.csv`.
 
 ## Thresholding (results_zscore/asymmetry/summary/all_patients_method_summary.csv, n=17, mean coverage %)
-- M01 10.51, M02 7.96, M03 FDR 10.42, M04 Bonferroni 1.04, M05 TFCE 1.50, M06 GRF 12.01,
-  M07 permutation 0.50 (1/17 with no surviving cluster), M08 GMM 8.15, M09 Otsu 15.25,
-  M10 random 3.00, M11 quality+TFCE 1.48, M12 quality+GMM 7.70, M13 quality+Otsu 14.71.
+- Coverage is relative to the brain-mask voxels with non-zero zAI (mean 1.41 M voxels).
+- M01 8.4, M02 9.1, M03 FDR 32.4, M04 Bonferroni 3.1, M05 TFCE 4.6, M06 GRF 13.1,
+  M07 permutation 1.6 (P021 with no surviving cluster), M08 GMM 12.1 (degenerate in P025), M09 Otsu 31.8,
+  M10 random 3.0, M11 quality+TFCE 4.6, M12 quality+GMM 12.6, M13 quality+Otsu 30.1.
 - M3/M4/M7 noise scale is estimated over the quality mask intersected with |zAI| > 0 (fixed 2026-06-23;
   before the fix, zero voxels collapsed it and all three returned nothing). M7 uses 200 permutations.
 - Cluster counts in that summary include both members of each mirrored pair.
