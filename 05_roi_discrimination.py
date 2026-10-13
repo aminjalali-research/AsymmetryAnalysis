@@ -9,10 +9,12 @@ based on comprehensive MDT-style clinical review of:
 - NEUROPSYCHOLOGY
 - RESEARCH MRI
 
-Includes options for:
-1. Unilateral-only analysis (L vs R)
-2. Including bilateral with dominant side
-3. Full analysis including all bilateral cases
+Analyses:
+1. Unilateral-only discrimination (L vs R, n=13): signed aggregation scores,
+   ROC/AUC against MDT side.
+2. Bilateral/unclear magnitude probe (B + U vs unilateral): scored on asymmetry
+   magnitude, not a forced side. (The former "bilateral with dominant side"
+   pooling was retired; B/U cases are never forced into L or R.)
 """
 
 import pandas as pd
@@ -36,6 +38,7 @@ from ez_ground_truth import (
     get_ez_label,
     get_unilateral_patients,
     get_bilateral_patients,
+    get_unclear_patients,
     get_left_ez_patients,
     get_right_ez_patients,
 )
@@ -369,6 +372,19 @@ class EZDiscriminatorMDT:
     # EVALUATION
     # ==========================================================================
 
+    @staticmethod
+    def _safe_auc(y_true, y_score, method_name, orientation):
+        """ROC AUC, or NaN (with a logged warning) if the ROC cannot be computed."""
+        try:
+            fpr, tpr, _ = roc_curve(y_true, y_score)
+            return float(auc(fpr, tpr))
+        except Exception as exc:  # noqa: BLE001 - log and record NaN
+            print(
+                f"   ⚠️  ROC failed for {method_name} ({orientation}): "
+                f"{type(exc).__name__}: {exc} -> AUC recorded as NaN"
+            )
+            return float("nan")
+
     def evaluate_methods(self, include_bilateral="exclude"):
         """
         Evaluate all left-vs-right methods against ground truth.
@@ -456,23 +472,15 @@ class EZDiscriminatorMDT:
             # Interpretation 1: Positive score → Left EZ (EZ has higher perfusion - ictal pattern)
             # Interpretation 2: Negative score → Left EZ (EZ has lower perfusion - interictal hypoperfusion)
 
-            auc_direct = 0.5
-            auc_flipped = 0.5
+            # A failed ROC (e.g. NaN scores, single-class labels) is recorded as
+            # NaN AUC and logged, never silently reported as chance (0.5).
+            auc_direct = self._safe_auc(y_true_arr, y_score, method_name, "direct")
+            auc_flipped = self._safe_auc(y_true_arr, -y_score, method_name, "flipped")
 
-            try:
-                fpr, tpr, _ = roc_curve(y_true_arr, y_score)
-                auc_direct = auc(fpr, tpr)
-            except:
-                pass
-
-            try:
-                fpr, tpr, _ = roc_curve(y_true_arr, -y_score)
-                auc_flipped = auc(fpr, tpr)
-            except:
-                pass
-
-            # Use better interpretation
-            if auc_flipped > auc_direct:
+            # Use better interpretation (NaN never wins over a finite AUC)
+            if np.isfinite(auc_flipped) and (
+                not np.isfinite(auc_direct) or auc_flipped > auc_direct
+            ):
                 best_auc = auc_flipped
                 flip = True
                 y_score_eval = -y_score
@@ -781,10 +789,14 @@ class EZDiscriminatorMDT:
         left = get_left_ez_patients()
         right = get_right_ez_patients()
         bilateral = get_bilateral_patients()
+        unclear = get_unclear_patients()
         report.append(f"Left EZ: {len(left)} patients - {', '.join(sorted(left))}")
         report.append(f"Right EZ: {len(right)} patients - {', '.join(sorted(right))}")
         report.append(
             f"Bilateral: {len(bilateral)} patients - {', '.join(sorted(bilateral))}"
+        )
+        report.append(
+            f"Unclear: {len(unclear)} patients - {', '.join(sorted(unclear))}"
         )
         report.append("")
 

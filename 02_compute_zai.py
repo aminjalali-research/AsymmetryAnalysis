@@ -55,6 +55,7 @@ from src.thresholding import (
 )
 
 assert len(METHOD_REGISTRY) == 13, "thresholding registry should expose 13 methods"
+from ez_ground_truth import DISCARDED  # patients excluded from the cohort (P014)
 
 # ============================================================================
 # CONFIGURATION
@@ -209,6 +210,10 @@ def build_group_asymmetry_stats(group_key, force_rebuild=False):
         ref_img = nib.load(str(group_dir / "mean_asymmetry.nii.gz"))
         with open(meta_path) as f:
             meta = json.load(f)
+        if meta.get("sym") is not None and bool(meta["sym"]) != bool(SYM_MODE):
+            raise RuntimeError(
+                f"Cached group stats in {meta_path.parent} were built with sym={meta['sym']} "
+                f"but this run uses sym={SYM_MODE}; rerun with --rebuild.")
         print(f"    {meta['n_subjects']} subjects, {meta['brain_mask_voxels']:,} mask voxels")
         return mean_ai, sd_ai, mask, ref_img
 
@@ -298,6 +303,7 @@ def build_group_asymmetry_stats(group_key, force_rebuild=False):
         "brain_mask_voxels": int(brain_mask.sum()),
         "mean_ai_in_mask": float(mean[brain_mask].mean()) if brain_mask.any() else 0,
         "built_at": datetime.now().isoformat(),
+            "sym": bool(SYM_MODE),
     }
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
@@ -396,6 +402,10 @@ def _classify_direction(z_perf_cluster: float, z_perf_mirror: float,
     if mirror_dev and not cluster_dev:
         return ("hyper" if z_perf_mirror > 0 else "hypo",
                 mirror_hemi, mirror_hemi)
+    # Exact ties (e.g. both 0.0 when neither side has valid voxels) give no
+    # side; otherwise the two members of a mirrored pair would vote opposite sides.
+    if abs(z_perf_cluster) == abs(z_perf_mirror):
+        return ("mixed" if cluster_dev else "subtle"), "", ""
     if cluster_dev and mirror_dev:
         return "mixed", larger_side, larger_side
     return "subtle", larger_side, larger_side
@@ -536,6 +546,11 @@ def process_patient(patient_id, mean_ai, sd_ai, brain_mask, parc, gm_mask,
                 "primary_region": primary_region,
                 # Direction-of-abnormality inference columns
                 "cluster_hemi": cluster_hemi,
+                # Hemisphere with the higher perfusion. `direction` is the raw
+                # sign of zAI at this cluster (positive = more than its mirror),
+                # which means R>L for clusters located in the right hemisphere.
+                "dominant_side": ("L" if (float(z_vals.mean()) > 0) == (cluster_hemi == "L")
+                                  else "R"),
                 "z_perf_cluster_side": (round(z_perf_cluster, 2)
                                         if not np.isnan(z_perf_cluster) else ""),
                 "z_perf_mirror_side": (round(z_perf_mirror, 2)
@@ -590,7 +605,7 @@ def plot_montage(patient_id, sig_z, mask, mean_ai, brain_mask, out_dir, prefix):
     fig, axes = plt.subplots(3, 4, figsize=(16, 12))
     fig.suptitle(
         f"{patient_id} — Asymmetry Z-Score vs Controls (Gray Matter)\n"
-        f"Red/warm = abnormally LEFT-dominant | Blue/cool = abnormally RIGHT-dominant\n"
+        f"Red/warm = voxel higher than its mirror | Blue/cool = lower than its mirror\n"
         f"Threshold: |z| >= {ZSCORE_THRESHOLD}, Min cluster: {MIN_CLUSTER_SIZE} voxels",
         fontsize=12, fontweight="bold",
     )
@@ -626,7 +641,7 @@ def plot_montage(patient_id, sig_z, mask, mean_ai, brain_mask, out_dir, prefix):
 # ============================================================================
 
 def main():
-    global ZSCORE_THRESHOLD, MIN_CLUSTER_SIZE, SYM_MODE
+    global ZSCORE_THRESHOLD, MIN_CLUSTER_SIZE, SYM_MODE, GROUP_KEY
 
     parser = argparse.ArgumentParser(
         description="Control-referenced asymmetry z-score analysis")
@@ -643,6 +658,7 @@ def main():
     ZSCORE_THRESHOLD = args.threshold
     MIN_CLUSTER_SIZE = args.min_cluster
     group_key = args.group
+    GROUP_KEY = group_key  # used by plot_montage for the band's background
     SYM_MODE = args.sym
     if SYM_MODE:
         print("  [SYM] Using symmetric-template-registered perfusion from symreg/sym_perf/")
@@ -714,7 +730,7 @@ def main():
                 sex = str(row[sex_col]).strip().upper()[0]
                 sex_ok = (grp_sex == "FM") or (sex == grp_sex)
                 if sex_ok and grp_lo <= age <= grp_hi:
-                    if not (PATIENT_DATASET_DIR / pid).exists():
+                    if pid in DISCARDED or not (PATIENT_DATASET_DIR / pid).exists():
                         continue
                     # In symmetric-space mode, skip patients without a registered
                     # symmetric perfusion (e.g. P014, excluded from the cohort).
@@ -722,7 +738,8 @@ def main():
                         continue
                     patients.append(pid)
         else:
-            patients = sorted([d.name for d in PATIENT_DATASET_DIR.iterdir() if d.is_dir()])
+            patients = sorted([d.name for d in PATIENT_DATASET_DIR.iterdir()
+                               if d.is_dir() and d.name not in DISCARDED])
 
     print(f"  Patients: {patients}")
     print("=" * 70)

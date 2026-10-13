@@ -1,17 +1,14 @@
 """
-Comprehensive ROI-Based Asymmetry Analysis for FreeSurfer ASL Perfusion Data
+ROI-based asymmetry analysis for ASL perfusion data (FreeSurfer parcellations).
 
-This package provides tools for analyzing brain asymmetry from FreeSurfer ASL perfusion data.
+Core modules: ``calculator`` (15 asymmetry indices) and ``thresholding``
+(13 voxelwise thresholding/clustering methods).
 """
 
 __version__ = "1.0.0"
-__author__ = "FreeSurfer Asymmetry Analysis Team"
-__email__ = "your-email@example.com"
 
-from .freesurfer_parser import FreeSurferASLParser
 from .calculator import AsymmetryCalculator
 
 __all__ = [
-    "FreeSurferASLParser",
     "AsymmetryCalculator",
 ]

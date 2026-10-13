@@ -10,17 +10,23 @@ visual_analysis/ alongside existing figures.
 Inputs (produced by 02_compute_zai.py):
   - results_zscore/asymmetry/patients/{pid}/{pid}_asymmetry_zscore.nii.gz
   - results_zscore/asymmetry/patients/{pid}/{pid}_asymmetry_cluster_report.csv
-  - results_zscore/asymmetry/groups/{group}/brain_mask.nii.gz
-  - results_zscore/groups/{group}/mean_perfusion.nii.gz   (anatomical bg)
-  - results_zscore/groups/{group}/consensus_parcellation.nii.gz
+  - results_zscore/asymmetry/groups/{band}/brain_mask.nii.gz
+  - results_zscore/groups/{band}/mean_perfusion.nii.gz   (anatomical bg)
+  - results_zscore/groups/{band}/consensus_parcellation.nii.gz
+where {band} is EACH PATIENT'S OWN age band (FM_20_39 / FM_40_59 / FM_60_79),
+resolved by resolve_patient_band().
 
-Each voxel's zAI value answers: "Is this spot's LEFT-vs-RIGHT perfusion
-difference abnormal compared to healthy controls?" rather than the raw
-"is this spot's blood flow abnormal?" question.
+Each voxel's zAI value answers: "Is this spot's perfusion, relative to its
+mirror voxel in the other hemisphere, abnormal compared to healthy controls?"
 
-Sign convention:
-  - zAI > 0: abnormally LEFT-dominant perfusion at this voxel
-  - zAI < 0: abnormally RIGHT-dominant perfusion at this voxel
+Sign convention (IMPORTANT): the zAI map is exactly antisymmetric,
+zAI(v) = -zAI(mirror v), so every abnormality appears as a mirrored pair of
+clusters. zAI > 0 means "this voxel is perfused MORE than its mirror"; it does
+NOT mean left > right for a voxel located in the right hemisphere. The
+physically higher-perfused side of a cluster is
+    dominant_side = "L" if (mean_z > 0) == (cluster_hemi == "L") else "R"
+and each mirrored pair is counted once by keeping the member with
+cluster_hemi == ez_side_pred (see one_member_per_pair()).
 
 **2026-05-05 37-ROI clinical scope policy (DEFAULT):** Voxel-level figures
 (Figure 10 zAI overview, Figure 13 top clusters, Figure 14 multipatient
@@ -28,11 +34,12 @@ axial) are restricted to the 37 clinically-relevant ROI pairs by default,
 matching `03_clinical_maps.py` and Pipeline A. Use `--no-clinical-mask` to
 fall back to the full-brain (gray-matter-included) view for diagnostic
 exploration. The mask is loaded per-patient from
-`Dataset/<PID>/aparc+aseg.nii.gz`.
+`Dataset/<PID>/aparc+aseg.nii.gz`, or with --sym from
+`symreg/sym_perf/<PID>_aparc_sym.nii.gz` (canonical symmetric-space zAI).
 
 Usage:
-    python 04_publication_figures.py                    # 37-ROI mask (default)
-    python 04_publication_figures.py --no-clinical-mask # disable 37-ROI mask
+    python 04_publication_figures.py --sym              # canonical (symmetric space)
+    python 04_publication_figures.py --sym --no-clinical-mask
 """
 
 import argparse
@@ -72,9 +79,11 @@ plt.rcParams["legend.fontsize"] = 9
 BASE_DIR = Path(__file__).parent
 RESULTS_DIR = BASE_DIR / "results_zscore"
 ASYMMETRY_DIR = RESULTS_DIR / "asymmetry"
-GROUP_KEY = "FM_20_39"   # default band (F_20_39 retired; per-patient bands resolved elsewhere)
-GROUP_DIR = RESULTS_DIR / "groups" / GROUP_KEY
-ASYM_GROUP_DIR = ASYMMETRY_DIR / "groups" / GROUP_KEY
+# Canonical sex-pooled age bands (thesis design). Each patient is compared with
+# its own band; DEFAULT_BAND is only a last-resort fallback.
+BANDS = {"FM_20_39": (20, 39), "FM_40_59": (40, 59), "FM_60_79": (60, 79)}
+DEFAULT_BAND = "FM_20_39"
+BAND_TITLE = "age-band-matched controls (FM_20_39 / FM_40_59 / FM_60_79)"
 DATASET_DIR = BASE_DIR / "Dataset"
 OUTPUT_DIR = BASE_DIR / "visual_analysis"
 
@@ -200,22 +209,149 @@ def load_zai_map(patient_id):
     return nib.load(str(path)).get_fdata(dtype=np.float32)
 
 
-def load_group_data():
-    """Load the anatomical background, brain mask, and parcellation.
+_AGE_CACHE = None
+
+
+def _patient_ages():
+    """{PID: age} from clinical_spreadsheet.xlsx (empty dict if unavailable)."""
+    global _AGE_CACHE
+    if _AGE_CACHE is not None:
+        return _AGE_CACHE
+    _AGE_CACHE = {}
+    spreadsheet = BASE_DIR / "clinical_spreadsheet.xlsx"
+    if spreadsheet.exists():
+        try:
+            df = pd.read_excel(str(spreadsheet))
+            df.columns = [c.strip().upper() for c in df.columns]
+            id_col = [c for c in df.columns if "ID" in c][0]
+            age_col = [c for c in df.columns if "AGE" in c][0]
+            for _, row in df.iterrows():
+                pid = str(row[id_col]).strip()
+                if pid.startswith("sub-"):
+                    pid = pid[4:]
+                try:
+                    _AGE_CACHE[pid] = float(row[age_col])
+                except (TypeError, ValueError):
+                    pass
+        except Exception:
+            pass
+    return _AGE_CACHE
+
+
+def resolve_patient_band(patient_id):
+    """Return the patient's own control age band (FM_20_39/FM_40_59/FM_60_79).
+
+    Order: (1) the band recorded by 01_build_control_normative.py in
+    results_zscore/patients/<PID>/<PID>_vs_<band>_zscore.nii.gz; (2) the
+    patient's age in clinical_spreadsheet.xlsx; (3) DEFAULT_BAND with a warning.
+    """
+    pdir = RESULTS_DIR / "patients" / patient_id
+    if pdir.exists():
+        found = sorted(
+            f.name[len(f"{patient_id}_vs_"):-len("_zscore.nii.gz")]
+            for f in pdir.glob(f"{patient_id}_vs_FM_*_zscore.nii.gz"))
+        found = [b for b in found if b in BANDS]
+        if len(found) == 1:
+            return found[0]
+    age = _patient_ages().get(patient_id)
+    if age is not None:
+        for band, (lo, hi) in BANDS.items():
+            if lo <= age <= hi:
+                return band
+    print(f"   ! Could not resolve age band for {patient_id}; using {DEFAULT_BAND}.")
+    return DEFAULT_BAND
+
+
+_GROUP_CACHE = {}
+
+
+def load_group_data(band=DEFAULT_BAND):
+    """Load the anatomical background, brain mask, and parcellation for a band.
 
     Background uses mean_perfusion.nii.gz (raw-perfusion control mean) as a
     visually informative anatomical reference; the asymmetry-pipeline brain
-    mask (from results_zscore/asymmetry/groups/) is preferred for masking
-    zAI maps when available.
+    mask (from results_zscore/asymmetry/groups/<band>/) is preferred for
+    masking zAI maps when available. Cached per band.
     """
-    mean_img = nib.load(str(GROUP_DIR / "mean_perfusion.nii.gz")).get_fdata(dtype=np.float32)
-    asym_mask_path = ASYM_GROUP_DIR / "brain_mask.nii.gz"
+    if band in _GROUP_CACHE:
+        return _GROUP_CACHE[band]
+    gdir = RESULTS_DIR / "groups" / band
+    mean_img = nib.load(str(gdir / "mean_perfusion.nii.gz")).get_fdata(dtype=np.float32)
+    asym_mask_path = ASYMMETRY_DIR / "groups" / band / "brain_mask.nii.gz"
     if asym_mask_path.exists():
         mask = nib.load(str(asym_mask_path)).get_fdata().astype(bool)
     else:
-        mask = nib.load(str(GROUP_DIR / "brain_mask.nii.gz")).get_fdata().astype(bool)
-    parc = nib.load(str(GROUP_DIR / "consensus_parcellation.nii.gz")).get_fdata().astype(np.int32)
-    return mean_img, mask, parc
+        mask = nib.load(str(gdir / "brain_mask.nii.gz")).get_fdata().astype(bool)
+    parc = nib.load(str(gdir / "consensus_parcellation.nii.gz")).get_fdata().astype(np.int32)
+    _GROUP_CACHE[band] = (mean_img, mask, parc)
+    return _GROUP_CACHE[band]
+
+
+def dominant_side(mean_z, cluster_hemi):
+    """Physical side with HIGHER perfusion for a zAI cluster.
+
+    zAI > 0 means the cluster is perfused more than its mirror, so the higher
+    side is the cluster's own hemisphere when mean_z > 0, else the opposite.
+    """
+    return "L" if (float(mean_z) > 0) == (str(cluster_hemi) == "L") else "R"
+
+
+def one_member_per_pair(df):
+    """Keep one member of each mirrored cluster pair (cluster_hemi == ez_side_pred)
+    and add a ``dominant_side`` column (physically higher-perfused side).
+
+    Falls back to the unfiltered frame (with a warning) for legacy CSVs that
+    lack the cluster_hemi / ez_side_pred columns.
+    """
+    if not {"cluster_hemi", "ez_side_pred"}.issubset(df.columns):
+        print("   ! legacy cluster CSV (no cluster_hemi/ez_side_pred): "
+              "pairs cannot be de-duplicated")
+        return df.assign(dominant_side=np.nan)
+    keep = df[df["cluster_hemi"].astype(str) == df["ez_side_pred"].astype(str)].copy()
+    zcol = "mean_z" if "mean_z" in keep.columns else "mean_zai"
+    keep["dominant_side"] = [dominant_side(z, h)
+                             for z, h in zip(keep[zcol], keep["cluster_hemi"])]
+    return keep
+
+
+def load_cluster_report(patient_id):
+    path = (ASYMMETRY_DIR / "patients" / patient_id /
+            f"{patient_id}_asymmetry_cluster_report.csv")
+    if not path.exists():
+        return None
+    return pd.read_csv(str(path))
+
+
+# Region-name keywords matching the 37-ROI clinical scope (cluster reports use
+# abbreviated REGION_NAMES strings, e.g. "L-mid.temporal").
+CLINICAL_KEYWORDS = {
+    "thalamus", "hippocampus", "amygdala",
+    "bankssts", "caud.ant.cing", "caud.mid.front", "cuneus",
+    "entorhinal", "fusiform", "inf.parietal", "inf.temporal",
+    "isthmus.cing", "lat.occipital", "lat.orbitofr", "lingual",
+    "med.orbitofr", "mid.temporal", "parahippo", "paracentral",
+    "parsoperc", "parsorbit", "parstriang", "pericalcarine",
+    "postcentral", "post.cing", "precentral", "precuneus",
+    "rost.ant.cing", "rost.mid.front", "sup.frontal", "sup.parietal",
+    "sup.temporal", "supramarginal", "frontalpole", "temporalpole",
+    "transv.temp", "insula",
+    # Alternate naming variants
+    "superiortemporal", "middletemporal", "inferiortemporal",
+    "superiorfrontal", "middlefrontal", "inferiorparietal",
+    "superiorparietal", "lateraloccipital", "lateralorbitofrontal",
+    "medialorbitofrontal", "rostralanteriorcingulate",
+    "rostralmiddlefrontal", "caudalanteriorcingulate",
+    "caudalmiddlefrontal", "isthmuscingulate", "posteriorcingulate",
+    "parahippocampal", "parsopercularis", "parsorbitalis",
+    "parstriangularis", "transversetemporal",
+}
+
+
+def in_clinical_scope(region_name):
+    if not isinstance(region_name, str):
+        return False
+    name_low = region_name.lower()
+    return any(kw in name_low for kw in CLINICAL_KEYWORDS)
 
 
 def load_patient_demographics():
@@ -238,12 +374,17 @@ def load_patient_demographics():
     return demos
 
 
-def compute_region_matrix(patients, mask, parc, regions_dict):
-    """Compute mean zAI per region per patient → (n_patients, n_regions) matrix."""
+def compute_region_matrix(patients, regions_dict, band_of):
+    """Compute mean zAI per region per patient → (n_patients, n_regions) matrix.
+
+    Each patient uses the brain mask and consensus parcellation of its OWN
+    age band (``band_of[pid]``).
+    """
     region_labels = sorted(regions_dict.keys())
     region_names = [regions_dict[r] for r in region_labels]
     data = np.full((len(patients), len(region_labels)), np.nan)
     for i, pid in enumerate(patients):
+        _, mask, parc = load_group_data(band_of[pid])
         zai_map = load_zai_map(pid)
         valid = mask & (zai_map != 0)
         for j, rl in enumerate(region_labels):
@@ -272,7 +413,7 @@ class ZAIVisualAnalyzer:
     def __init__(self, apply_clinical_mask=True):
         self.patients = discover_patients()
         self.demos = load_patient_demographics()
-        self.mean_img, self.mask, self.parc = load_group_data()
+        self.band_of = {pid: resolve_patient_band(pid) for pid in self.patients}
         self.apply_clinical_mask = apply_clinical_mask
         # Per-patient 37-ROI masks, lazily cached
         self._clinical_masks = {}
@@ -281,6 +422,10 @@ class ZAIVisualAnalyzer:
 
     def _label(self, pid):
         return self.demos.get(pid, pid)
+
+    def _group(self, pid):
+        """(mean_img, brain_mask, parcellation) of the patient's own band."""
+        return load_group_data(self.band_of[pid])
 
     def _patient_clinical_mask(self, pid, ref_shape):
         """Return per-patient 37-ROI mask (cached). None if unavailable."""
@@ -298,12 +443,13 @@ class ZAIVisualAnalyzer:
         """Combine the group brain mask with the per-patient 37-ROI mask
         (when --no-clinical-mask is unset and the mask is available).
         """
+        _, brain_mask, _ = self._group(pid)
         if not self.apply_clinical_mask:
-            return self.mask
+            return brain_mask
         clin = self._patient_clinical_mask(pid, ref_shape=zai_map.shape)
         if clin is None:
-            return self.mask
-        return self.mask & clin
+            return brain_mask
+        return brain_mask & clin
 
     def _add_clinical_footer(self, fig, y=0.005):
         """Add the 37-ROI policy footer to a figure (only if mask is on)."""
@@ -313,23 +459,29 @@ class ZAIVisualAnalyzer:
 
     # ------------------------------------------------------------------
     def plot_zai_overview(self):
-        """Figure 10: zAI distribution dashboard (violin + classification)."""
+        """Figure 10: zAI distribution dashboard.
+
+        By antisymmetry (zAI(v) = -zAI(mirror v)) the global mean zAI and the
+        split of suprathreshold voxels into zAI>0 vs zAI<0 are ~0 / ~50:50 by
+        construction, so they are NOT shown. Lateral information is taken from
+        the cluster reports instead, counting each mirrored pair once and
+        attributing it to the physically higher- or lower-perfused side.
+        """
         print("\n📊 Generating zAI overview dashboard...")
 
         fig, axes = plt.subplots(2, 2, figsize=(15, 12))
         scope_suffix = " (37-ROI clinical scope)" if self.apply_clinical_mask else ""
         fig.suptitle(
-            f"Control-Referenced Asymmetry zAI Overview (vs {GROUP_KEY})"
+            f"Control-Referenced Asymmetry zAI Overview (vs {BAND_TITLE})"
             f"{scope_suffix}",
-            fontsize=16, fontweight="bold",
+            fontsize=15, fontweight="bold",
         )
 
         all_z = []
         patient_labels = []
-        left_pcts = []
-        right_pcts = []
-        means = []
+        sig_pcts = []
         stds = []
+        hi_L, hi_R, lo_L, lo_R = [], [], [], []
 
         for pid in self.patients:
             zai_map = load_zai_map(pid)
@@ -341,12 +493,25 @@ class ZAIVisualAnalyzer:
             idx = rng.choice(len(z), size=min(50000, len(z)), replace=False)
             all_z.append(z[idx])
             patient_labels.append(self._label(pid))
-
-            n = len(z)
-            left_pcts.append(100 * (z > ZAI_THRESHOLD).sum() / n)
-            right_pcts.append(100 * (z < -ZAI_THRESHOLD).sum() / n)
-            means.append(z.mean())
+            sig_pcts.append(100 * (np.abs(z) >= ZAI_THRESHOLD).sum() / max(len(z), 1))
             stds.append(z.std())
+
+            # One member per mirrored pair; voxels by physically higher side.
+            df = load_cluster_report(pid)
+            hL = hR = 0
+            if df is not None and not df.empty:
+                df = one_member_per_pair(df)
+                if self.apply_clinical_mask:
+                    df = df[df["primary_region"].apply(in_clinical_scope)]
+                hL = int(df.loc[df["dominant_side"] == "L", "size_voxels"].sum())
+                hR = int(df.loc[df["dominant_side"] == "R", "size_voxels"].sum())
+            hi_L.append(hL)
+            hi_R.append(hR)
+            # The lower-perfused side of each pair is the opposite hemisphere.
+            lo_L.append(hR)
+            lo_R.append(hL)
+
+        x = np.arange(len(self.patients))
 
         # -- Panel 1: Violin plot --
         ax1 = axes[0, 0]
@@ -363,61 +528,58 @@ class ZAIVisualAnalyzer:
         for i, patch in enumerate(bp["boxes"]):
             patch.set_facecolor(palette[i])
             patch.set_alpha(0.8)
-        ax1.axhline(ZAI_THRESHOLD, color="red", linestyle="--", alpha=0.5)
-        ax1.axhline(-ZAI_THRESHOLD, color="blue", linestyle="--", alpha=0.5)
+        ax1.axhline(ZAI_THRESHOLD, color="gray", linestyle="--", alpha=0.5)
+        ax1.axhline(-ZAI_THRESHOLD, color="gray", linestyle="--", alpha=0.5)
         ax1.axhline(0, color="gray", linestyle="-", alpha=0.3)
-        ax1.set_xticks(range(len(self.patients)))
-        ax1.set_xticklabels(patient_labels, fontsize=9)
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(patient_labels, fontsize=8, rotation=60, ha="right")
         ax1.set_ylabel("zAI")
-        ax1.set_title("Voxel-wise zAI Distributions")
-        ax1.set_ylim(-10, 15)
+        ax1.set_title("Voxel-wise zAI Distributions\n"
+                      "(symmetric about 0 by construction: zAI(v) = -zAI(mirror v))")
+        ax1.set_ylim(-10, 10)
         ax1.grid(True, alpha=0.3)
 
-        # -- Panel 2: Mean zAI per patient --
+        # -- Panel 2: hemisphere with HIGHER perfusion (one member per pair) --
         ax2 = axes[0, 1]
-        colors = ["red" if m > 0 else "blue" for m in means]
-        ax2.bar(patient_labels, means, color=colors, alpha=0.7, edgecolor="black")
-        ax2.axhline(0, color="black", linestyle="-", linewidth=1)
-        ax2.set_ylabel("Mean zAI")
-        ax2.set_title("Global Asymmetry Shift\n(+ left-dominant, - right-dominant relative to controls)")
+        w = 0.38
+        ax2.bar(x - w / 2, hi_L, w, color="indianred", edgecolor="black",
+                label="Left hemisphere higher")
+        ax2.bar(x + w / 2, hi_R, w, color="steelblue", edgecolor="black",
+                label="Right hemisphere higher")
+        ax2.set_xticks(x)
+        ax2.set_xticklabels(patient_labels, fontsize=8, rotation=60, ha="right")
+        ax2.set_ylabel("Cluster voxels (one member per mirrored pair)")
+        ax2.set_title("Physically HIGHER-perfused side of each asymmetric cluster pair")
+        ax2.legend(fontsize=8)
         ax2.grid(True, alpha=0.3, axis="y")
-        plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45)
 
-        # -- Panel 3: Stacked classification bar --
+        # -- Panel 3: hemisphere with LOWER perfusion (one member per pair) --
         ax3 = axes[1, 0]
-        normal_pcts = [100 - h - l for h, l in zip(left_pcts, right_pcts)]
-        x = np.arange(len(self.patients))
-        ax3.bar(x, normal_pcts, color="lightgray", label="Normal", edgecolor="white")
-        ax3.bar(x, left_pcts, bottom=normal_pcts, color="indianred",
-                label=f"Left-dominant (zAI>{ZAI_THRESHOLD})", edgecolor="white")
-        bottoms = [n + h for n, h in zip(normal_pcts, left_pcts)]
-        ax3.bar(x, right_pcts, bottom=bottoms, color="steelblue",
-                label=f"Right-dominant (zAI<-{ZAI_THRESHOLD})", edgecolor="white")
+        ax3.bar(x - w / 2, lo_L, w, color="indianred", edgecolor="black",
+                label="Left hemisphere lower")
+        ax3.bar(x + w / 2, lo_R, w, color="steelblue", edgecolor="black",
+                label="Right hemisphere lower")
         ax3.set_xticks(x)
-        ax3.set_xticklabels(patient_labels, fontsize=9)
-        ax3.set_ylabel("% of Brain Voxels")
-        ax3.set_title("Voxel Classification per Patient")
-        ax3.legend(fontsize=8, loc="lower right")
-        ax3.set_ylim(0, 100)
+        ax3.set_xticklabels(patient_labels, fontsize=8, rotation=60, ha="right")
+        ax3.set_ylabel("Cluster voxels (one member per mirrored pair)")
+        ax3.set_title("Physically LOWER-perfused side of each asymmetric cluster pair")
+        ax3.legend(fontsize=8)
         ax3.grid(True, alpha=0.3, axis="y")
-        plt.setp(ax3.xaxis.get_majorticklabels(), rotation=45)
 
-        # -- Panel 4: Variability (Std) vs Mean --
+        # -- Panel 4: % suprathreshold vs heterogeneity --
         ax4 = axes[1, 1]
-        sig_counts = [h + l for h, l in zip(left_pcts, right_pcts)]
-        scatter = ax4.scatter(means, stds, s=[s * 10 for s in sig_counts],
-                              c=sig_counts, cmap="YlOrRd", alpha=0.7,
+        scatter = ax4.scatter(sig_pcts, stds, s=[max(p, 1) * 15 for p in sig_pcts],
+                              c=sig_pcts, cmap="YlOrRd", alpha=0.7,
                               edgecolors="black", linewidth=1.5)
         for i, pid in enumerate(self.patients):
-            ax4.annotate(self._label(pid), (means[i], stds[i]),
+            ax4.annotate(pid, (sig_pcts[i], stds[i]),
                          fontsize=8, ha="center", fontweight="bold")
-        ax4.set_xlabel("Mean zAI (global asymmetry shift)")
+        ax4.set_xlabel(f"% voxels with |zAI| >= {ZAI_THRESHOLD}")
         ax4.set_ylabel("Std Dev of zAI (heterogeneity)")
-        ax4.set_title("Asymmetry Shift vs Heterogeneity\n(Size = % significant voxels)")
-        ax4.axvline(0, color="gray", linestyle="-", linewidth=0.5)
+        ax4.set_title("Suprathreshold Burden vs Heterogeneity")
         ax4.grid(True, alpha=0.3)
         cbar = plt.colorbar(scatter, ax=ax4)
-        cbar.set_label("% Significant", rotation=270, labelpad=15)
+        cbar.set_label("% |zAI| >= threshold", rotation=270, labelpad=15)
 
         plt.tight_layout()
         self._add_clinical_footer(fig)
@@ -432,7 +594,7 @@ class ZAIVisualAnalyzer:
         print("\n📊 Generating regional zAI heatmap...")
 
         data, region_labels, region_names = compute_region_matrix(
-            self.patients, self.mask, self.parc, ALL_REGIONS)
+            self.patients, ALL_REGIONS, self.band_of)
 
         # Split into lh and rh
         lh_idx = [j for j, r in enumerate(region_labels)
@@ -474,8 +636,9 @@ class ZAIVisualAnalyzer:
         ax.set_xlabel("Brain Region", fontsize=12)
         ax.set_ylabel("Patient ID", fontsize=12)
         ax.set_title(
-            f"Regional Asymmetry zAI vs {GROUP_KEY} Controls\n"
-            f"(Red = abnormally LEFT-dominant, Blue = abnormally RIGHT-dominant)",
+            f"Regional Asymmetry zAI vs {BAND_TITLE}\n"
+            f"(Red = region perfused MORE than its contralateral homolog, "
+            f"Blue = LESS; lh and rh columns mirror each other by construction)",
             fontsize=14, fontweight="bold", pad=20,
         )
 
@@ -491,13 +654,14 @@ class ZAIVisualAnalyzer:
         print("\n📊 Generating subcortical focus plot...")
 
         data, region_labels, region_names = compute_region_matrix(
-            self.patients, self.mask, self.parc, SUBCORTICAL_REGIONS)
+            self.patients, SUBCORTICAL_REGIONS, self.band_of)
 
         fig, axes = plt.subplots(2, 1, figsize=(14, 10),
                                  gridspec_kw={"height_ratios": [2, 1]})
         fig.suptitle(
-            f"Subcortical Asymmetry zAI vs {GROUP_KEY} Controls\n"
-            f"(Dashed lines = significance threshold |zAI| = {ZAI_THRESHOLD})",
+            f"Subcortical Asymmetry zAI vs {BAND_TITLE}\n"
+            f"(+ = structure perfused more than its contralateral homolog; "
+            f"dashed lines = |zAI| = {ZAI_THRESHOLD})",
             fontsize=14, fontweight="bold",
         )
 
@@ -568,38 +732,6 @@ class ZAIVisualAnalyzer:
         """
         print("\n📊 Generating top clusters summary...")
 
-        # Build the set of region-name keywords matching the 37-ROI scope.
-        # Cluster reports use REGION_NAMES strings produced upstream. We use
-        # substring keyword matching to handle naming variants from different
-        # producers (e.g. "lh-Hippocampus", "L-superiortemporal", etc.).
-        clinical_keywords = {
-            "thalamus", "hippocampus", "amygdala",
-            "bankssts", "caud.ant.cing", "caud.mid.front", "cuneus",
-            "entorhinal", "fusiform", "inf.parietal", "inf.temporal",
-            "isthmus.cing", "lat.occipital", "lat.orbitofr", "lingual",
-            "med.orbitofr", "mid.temporal", "parahippo", "paracentral",
-            "parsoperc", "parsorbit", "parstriang", "pericalcarine",
-            "postcentral", "post.cing", "precentral", "precuneus",
-            "rost.ant.cing", "rost.mid.front", "sup.frontal", "sup.parietal",
-            "sup.temporal", "supramarginal", "frontalpole", "temporalpole",
-            "transv.temp", "insula",
-            # Alternate naming variants
-            "superiortemporal", "middletemporal", "inferiortemporal",
-            "superiorfrontal", "middlefrontal", "inferiorparietal",
-            "superiorparietal", "lateraloccipital", "lateralorbitofrontal",
-            "medialorbitofrontal", "rostralanteriorcingulate",
-            "rostralmiddlefrontal", "caudalanteriorcingulate",
-            "caudalmiddlefrontal", "isthmuscingulate", "posteriorcingulate",
-            "parahippocampal", "parsopercularis", "parsorbitalis",
-            "parstriangularis", "transversetemporal",
-        }
-
-        def _in_clinical_scope(region_name):
-            if not isinstance(region_name, str):
-                return False
-            name_low = region_name.lower()
-            return any(kw in name_low for kw in clinical_keywords)
-
         top_n = 15
         fig, axes = plt.subplots(len(self.patients), 1,
                                  figsize=(14, 3.5 * len(self.patients)), sharex=False)
@@ -608,9 +740,10 @@ class ZAIVisualAnalyzer:
 
         scope_suffix = " - 37-ROI clinical scope" if self.apply_clinical_mask else ""
         fig.suptitle(
-            f"Top {top_n} Cortical zAI Clusters per Patient (excl. White Matter)"
+            f"Top {top_n} zAI Cluster Pairs per Patient (excl. White Matter)"
             f"{scope_suffix}\n"
-            f"(vs {GROUP_KEY} controls, |zAI| > {ZAI_THRESHOLD})",
+            f"(vs {BAND_TITLE}; one member per mirrored pair; "
+            f"colour = physically higher-perfused hemisphere)",
             fontsize=14, fontweight="bold", y=1.01,
         )
 
@@ -623,7 +756,7 @@ class ZAIVisualAnalyzer:
                         ha="center", va="center", transform=ax.transAxes)
                 continue
 
-            df = pd.read_csv(str(report_path))
+            df = one_member_per_pair(pd.read_csv(str(report_path)))
             df_cortical = df[
                 ~df["primary_region"].str.contains(
                     "White-Matter|Unknown|Ventricle", na=False)
@@ -632,14 +765,10 @@ class ZAIVisualAnalyzer:
             # Apply 37-ROI scope filter when enabled
             if self.apply_clinical_mask:
                 df_cortical = df_cortical[
-                    df_cortical["primary_region"].apply(_in_clinical_scope)
+                    df_cortical["primary_region"].apply(in_clinical_scope)
                 ]
 
-            top_left = df_cortical[df_cortical["direction"] == "left-dominant"].nlargest(
-                top_n, "size_voxels")
-            top_right = df_cortical[df_cortical["direction"] == "right-dominant"].nlargest(
-                top_n, "size_voxels")
-            combined = pd.concat([top_left, top_right]).sort_values(
+            combined = df_cortical.nlargest(top_n, "size_voxels").sort_values(
                 "size_voxels", ascending=True)
 
             if combined.empty:
@@ -650,26 +779,32 @@ class ZAIVisualAnalyzer:
                         ha="center", va="center", transform=ax.transAxes)
                 continue
 
-            colors = ["indianred" if d == "left-dominant" else "steelblue"
-                      for d in combined["direction"]]
+            colors = ["indianred" if d == "L" else
+                      ("steelblue" if d == "R" else "gray")
+                      for d in combined["dominant_side"]]
             y_pos = range(len(combined))
             ax.barh(y_pos, combined["size_mm3"], color=colors, alpha=0.7,
                     edgecolor="black", linewidth=0.3)
 
+            peak_col = "peak_z" if "peak_z" in combined.columns else "peak_zai"
             for bar_idx, (_, row) in enumerate(combined.iterrows()):
+                dcls = row.get("direction_class", "")
+                dcls = f", {dcls}" if isinstance(dcls, str) and dcls else ""
                 ax.text(combined["size_mm3"].max() * 0.01, bar_idx,
-                        f"  {row['primary_region']}  (peak zAI={row['peak_z']:.1f})",
+                        f"  {row['primary_region']}  (peak zAI={row[peak_col]:.1f}"
+                        f"{dcls})",
                         va="center", fontsize=8)
 
-            ax.set_title(f"{self._label(pid)}", fontsize=11, fontweight="bold")
+            ax.set_title(f"{self._label(pid)}  [{self.band_of[pid]}]",
+                         fontsize=11, fontweight="bold")
             ax.set_xlabel("Cluster Size (mm\u00b3)", fontsize=10)
             ax.set_yticks([])
             ax.grid(True, alpha=0.3, axis="x")
 
             if idx == 0:
                 ax.legend(handles=[
-                    Patch(facecolor="indianred", label="LEFT-dominant (abnormal)"),
-                    Patch(facecolor="steelblue", label="RIGHT-dominant (abnormal)"),
+                    Patch(facecolor="indianred", label="Left hemisphere higher-perfused"),
+                    Patch(facecolor="steelblue", label="Right hemisphere higher-perfused"),
                 ], loc="lower right", fontsize=9)
 
         plt.tight_layout()
@@ -688,7 +823,8 @@ class ZAIVisualAnalyzer:
         """
         print("\n📊 Generating multi-patient axial comparison...")
 
-        z_indices = np.where(self.mask.any(axis=(0, 1)))[0]
+        ref_mask = self._group(self.patients[0])[1]
+        z_indices = np.where(ref_mask.any(axis=(0, 1)))[0]
         n_slices = 6
         slice_positions = np.linspace(
             z_indices[0] + 10, z_indices[-1] - 10, n_slices, dtype=int)
@@ -698,21 +834,22 @@ class ZAIVisualAnalyzer:
 
         scope_suffix = " - 37-ROI clinical scope" if self.apply_clinical_mask else ""
         fig.suptitle(
-            f"Axial zAI Maps vs {GROUP_KEY} Controls{scope_suffix}\n"
-            f"Red = abnormally LEFT-dominant (zAI>{ZAI_THRESHOLD}), "
-            f"Blue = abnormally RIGHT-dominant (zAI<-{ZAI_THRESHOLD})",
+            f"Axial zAI Maps vs {BAND_TITLE}{scope_suffix}\n"
+            f"Red = voxel perfused MORE than its mirror (zAI>{ZAI_THRESHOLD}), "
+            f"Blue = LESS (zAI<-{ZAI_THRESHOLD}); each abnormality appears as a "
+            f"mirrored red/blue pair",
             fontsize=14, fontweight="bold", y=1.01,
         )
-
-        vmax_bg = np.percentile(self.mean_img[self.mask], 95)
 
         for row, pid in enumerate(self.patients):
             zai_map = load_zai_map(pid)
             eff_mask = self._effective_mask(pid, zai_map)
+            mean_img, brain_mask, _ = self._group(pid)
+            vmax_bg = np.percentile(mean_img[brain_mask], 95)
 
             for col, sl in enumerate(slice_positions):
                 ax = axes[row, col] if len(self.patients) > 1 else axes[col]
-                bg = self.mean_img[:, :, sl].T
+                bg = mean_img[:, :, sl].T
                 ax.imshow(bg, cmap="gray", origin="lower", aspect="equal",
                           vmin=0, vmax=vmax_bg)
 
@@ -739,11 +876,19 @@ class ZAIVisualAnalyzer:
 
     # ------------------------------------------------------------------
     def plot_regional_consistency(self):
-        """Figure 15: Which regions are consistently asymmetric across patients."""
+        """Figure 15: Which homologous region PAIRS are consistently asymmetric.
+
+        By antisymmetry the rh value of a pair is ~ -(lh value), so each pair
+        is reported once using the left-hemisphere member: positive = LEFT
+        homolog perfused more than the right (relative to controls),
+        negative = RIGHT homolog perfused more.
+        """
         print("\n📊 Generating regional consistency analysis...")
 
+        lh_regions = {k: v.replace("lh-", "") for k, v in ALL_REGIONS.items()
+                      if v.startswith("lh-")}
         data, region_labels, region_names = compute_region_matrix(
-            self.patients, self.mask, self.parc, ALL_REGIONS)
+            self.patients, lh_regions, self.band_of)
 
         region_stats = []
         for j, rname in enumerate(region_names):
@@ -765,7 +910,9 @@ class ZAIVisualAnalyzer:
 
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         fig.suptitle(
-            f"Regional Asymmetry zAI Consistency vs {GROUP_KEY} Controls",
+            f"Regional Asymmetry zAI Consistency vs {BAND_TITLE}\n"
+            f"(one value per homologous pair; + = LEFT homolog higher, "
+            f"- = RIGHT homolog higher)",
             fontsize=14, fontweight="bold",
         )
 
@@ -779,8 +926,8 @@ class ZAIVisualAnalyzer:
         ax1.set_yticks(y_pos)
         ax1.set_yticklabels(top["region"], fontsize=9)
         ax1.set_xlabel("Mean zAI", fontsize=11)
-        ax1.set_title("Top 20 Regions by Average Asymmetry Deviation\n"
-                      "(Red=LEFT-dominant, Blue=RIGHT-dominant)")
+        ax1.set_title("Top 20 Region Pairs by Average Asymmetry Deviation\n"
+                      "(Red = left homolog higher, Blue = right homolog higher)")
         ax1.axvline(0, color="black", linestyle="-", linewidth=1)
         ax1.grid(True, alpha=0.3, axis="x")
 
@@ -790,13 +937,13 @@ class ZAIVisualAnalyzer:
         x2 = np.arange(len(consistent))
         width = 0.35
         ax2.barh(x2 - width / 2, consistent["n_left"], width,
-                 label="LEFT-dominant", color="indianred", alpha=0.7)
+                 label="Left homolog higher", color="indianred", alpha=0.7)
         ax2.barh(x2 + width / 2, consistent["n_right"], width,
-                 label="RIGHT-dominant", color="steelblue", alpha=0.7)
+                 label="Right homolog higher", color="steelblue", alpha=0.7)
         ax2.set_yticks(x2)
         ax2.set_yticklabels(consistent["region"], fontsize=9)
         ax2.set_xlabel("Number of Patients", fontsize=11)
-        ax2.set_title(f"Most Consistently Asymmetric Regions\n"
+        ax2.set_title(f"Most Consistently Asymmetric Region Pairs\n"
                       f"(# patients with |zAI|>{ZAI_THRESHOLD})")
         ax2.legend(fontsize=9)
         ax2.grid(True, alpha=0.3, axis="x")
@@ -824,8 +971,8 @@ class ZAIVisualAnalyzer:
                     label=f"Mean: {rdf['mean_z'].mean():.3f}")
         ax4.axvline(0, color="black", linestyle="-", linewidth=1)
         ax4.set_xlabel("Mean zAI", fontsize=11)
-        ax4.set_ylabel("Number of Regions", fontsize=11)
-        ax4.set_title("Distribution of Regional Mean zAI")
+        ax4.set_ylabel("Number of Region Pairs", fontsize=11)
+        ax4.set_title("Distribution of Regional Mean zAI (+ = left higher)")
         ax4.legend()
         ax4.grid(True, alpha=0.3, axis="y")
 
@@ -841,7 +988,7 @@ class ZAIVisualAnalyzer:
         print("\n📊 Generating patient clustering analysis...")
 
         data, region_labels, region_names = compute_region_matrix(
-            self.patients, self.mask, self.parc, ALL_REGIONS)
+            self.patients, ALL_REGIONS, self.band_of)
         matrix = np.nan_to_num(data, nan=0.0)
 
         fig, axes = plt.subplots(1, 2, figsize=(16, 6))
@@ -888,7 +1035,11 @@ class ZAIVisualAnalyzer:
         print("📊 zAI CONTROL-REFERENCED ASYMMETRY — VISUALIZATION SUITE")
         print("=" * 60)
         print(f"   Patients: {self.patients}")
-        print(f"   Group: {GROUP_KEY}")
+        bands = {}
+        for pid, b in self.band_of.items():
+            bands.setdefault(b, []).append(pid)
+        for b in sorted(bands):
+            print(f"   {b}: {bands[b]}")
         print(f"   Output: {OUTPUT_DIR}")
 
         self.plot_zai_overview()              # 10

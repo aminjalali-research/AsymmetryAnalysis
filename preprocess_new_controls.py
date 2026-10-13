@@ -41,7 +41,7 @@ GRID FIDELITY
 -------------
 The subject's own MNINonLinear/aparc+aseg.nii.gz is verified (at runtime) to
 be voxel-identical in shape AND affine to the existing old upsampled controls
-in DatasetControls/20_29F/. Using it as ``target_img`` guarantees every new
+in DatasetControls/FM_20_39/ (the old 20_29F dir was deleted). Using it as ``target_img`` guarantees every new
 upsampled perfusion map lands on the byte-identical grid the old controls use,
 so downstream Welford summation aligns voxel-for-voxel.
 
@@ -73,8 +73,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 CONTROLS_ROOT = PROJECT_ROOT / "DatasetControls"
 NEW_GROUP_DIRS = ["FM_20_39", "FM_40_59", "FM_60_79"]
 
-# Reference old-control upsampled grid (for affine/shape verification only).
-REFERENCE_OLD_GROUP = "20_29F"
+# Reference upsampled-control grid (for affine/shape verification only).
+# The original 20_29F reference dir was deleted; any already-upsampled FM_20_39
+# control sits on the identical 227x272x227 0.8 mm MNI grid.
+REFERENCE_OLD_GROUP = "FM_20_39"
 
 EXPECTED_SHAPE = (227, 272, 227)
 EXPECTED_ZOOMS = (0.8, 0.8, 0.8)

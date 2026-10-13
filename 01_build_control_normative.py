@@ -14,7 +14,7 @@ consensus parcellation built from the control subjects.
 Usage:
     python 01_build_control_normative.py                          # all matchable patients
     python 01_build_control_normative.py --patient P013           # single patient
-    python 01_build_control_normative.py --group F_20_39          # specific group
+    python 01_build_control_normative.py --group FM_20_39          # specific group
     python 01_build_control_normative.py --rebuild-group          # force rebuild group stats
 """
 
@@ -33,6 +33,7 @@ import numpy as np
 import nibabel as nib
 import pandas as pd
 from scipy import ndimage, stats
+from ez_ground_truth import DISCARDED  # patients excluded from the cohort (P014)
 
 # ============================================================================
 # CONFIGURATION
@@ -345,6 +346,7 @@ class ControlGroupBuilder:
             "total_voxels": int(np.prod(brain_mask.shape)),
             "mean_cbf_in_mask": float(mean[brain_mask].mean()) if brain_mask.any() else 0,
             "built_at": datetime.now().isoformat(),
+            "sym": bool(SYM_MODE),
         }
         with open(self.output_dir / "metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
@@ -404,6 +406,10 @@ class ControlGroupBuilder:
 
             with open(meta_path) as f:
                 metadata = json.load(f)
+            if metadata.get("sym") is not None and bool(metadata["sym"]) != bool(SYM_MODE):
+                raise RuntimeError(
+                    f"Cached group stats in {meta_path.parent} were built with sym={metadata['sym']} "
+                    f"but this run uses sym={SYM_MODE}; rerun with --rebuild.")
             print(f"    {metadata['n_subjects']} subjects, "
                   f"{metadata['brain_mask_voxels']:,} mask voxels")
 
@@ -529,7 +535,8 @@ class PatientZScoreAnalyzer:
         self.ref_img = ref_img
         self.affine = ref_img.affine if hasattr(ref_img, 'affine') else ref_img.header.get_best_affine()
         self.group_key = group_key
-        self.cluster_analyzer = ClusterAnalyzer()
+        # Read the module-level value at call time so --min-cluster takes effect
+        self.cluster_analyzer = ClusterAnalyzer(min_size=MIN_CLUSTER_SIZE)
         self.region_mapper = RegionMapper(parcellation_data)
 
     @staticmethod
@@ -806,7 +813,9 @@ class ControlZScoreAnalysis:
             age_match = lo <= demo["age"] <= hi
             if sex_match and age_match:
                 groups.append(gkey)
-        return groups if groups else self._available_groups()
+        available = set(self._available_groups())
+        groups = [g for g in groups if g in available]  # drop bands without control data
+        return groups if groups else sorted(available)
 
     def _available_groups(self):
         """Return group keys whose control subdirectories actually exist."""
@@ -832,7 +841,7 @@ class ControlZScoreAnalysis:
         matched = []
         for pid, demo in self.demographics.items():
             patient_dir = PATIENT_DATASET_DIR / pid
-            if not patient_dir.exists():
+            if pid in DISCARDED or not patient_dir.exists():
                 continue
             sex_match = gdef["sex"] == "FM" or gdef["sex"] == demo["sex"]
             age_match = lo <= demo["age"] <= hi
@@ -953,7 +962,7 @@ def main():
     parser.add_argument("--patient", "-p", type=str, default=None,
                         help="Process a single patient (e.g., P013)")
     parser.add_argument("--group", "-g", type=str, default=None,
-                        help="Process a specific control group (e.g., F_20_39)")
+                        help="Process a specific control group (e.g., FM_20_39)")
     parser.add_argument("--rebuild-group", action="store_true",
                         help="Force rebuild group statistics even if cached")
     parser.add_argument("--threshold", "-t", type=float, default=None,

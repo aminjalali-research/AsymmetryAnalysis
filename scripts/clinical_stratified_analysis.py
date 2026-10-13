@@ -93,8 +93,10 @@ def load_clusters(pid: str) -> pd.DataFrame:
     df["in_scope"] = df["region_canon"].apply(lambda n: bool(n) and n in ci.CLINICAL_NAMES)
     df["peak_abs"] = df["peak_z"].abs()
     df["flip_side"] = df["direction"].map({"left-dominant": "R", "right-dominant": "L"})
-    df["dir_side"] = df["ez_side_pred"].astype(str).str.upper().str[:1]
-    df.loc[~df["dir_side"].isin(["L", "R"]), "dir_side"] = df["flip_side"]
+    # Direction-rule side; rows without a prediction (exact ties) stay unassigned.
+    df["dir_side"] = df["ez_side_pred"].fillna("").astype(str).str.upper().str[:1]
+    # One member per mirrored pair: the member lying in its assigned hemisphere.
+    df["pair_member"] = df["dir_side"].isin(["L", "R"]) & (df["cluster_hemi"] == df["dir_side"])
     return df
 
 
@@ -104,6 +106,7 @@ def predict(df: pd.DataFrame, peak: float, size: int, scope: str, rule: str) -> 
     if scope == "temporal":
         d = d[d["region_lobe"].isin(TEMPORAL_LOBES)]
     if rule == "direction":
+        d = d[d["pair_member"]]
         d["side"] = d["dir_side"]
     elif rule == "flip":
         # one member per mirrored pair: keep the left-hemisphere member; a
@@ -118,7 +121,7 @@ def predict(df: pd.DataFrame, peak: float, size: int, scope: str, rule: str) -> 
         d = d[(d["direction_class"] == "hyper") & (d["cluster_hemi"] == d["ez_side_pred"])]
         d["side"] = d["cluster_hemi"]
     elif rule == "direction_no_subtle":
-        d = d[d["direction_class"].isin(["hypo", "hyper"])]
+        d = d[d["pair_member"] & d["direction_class"].isin(["hypo", "hyper"])]
         d["side"] = d["dir_side"]
     else:
         raise ValueError(rule)
@@ -137,7 +140,7 @@ def predict_production(df: pd.DataFrame, peak: float, size: int) -> tuple[str, s
     """Reproduce the pre-specified surgeon-report rule of 06_clinical_interpretation.py
     (mesial-temporal priority, then whole-scope fallback). Returns
     (prediction, confidence, L voxels, R voxels)."""
-    d = df[(df["peak_abs"] >= peak) & (df["size_voxels"] >= size) & df["in_scope"]].copy()
+    d = df[(df["peak_abs"] >= peak) & (df["size_voxels"] >= size) & df["in_scope"] & df["pair_member"]].copy()
     d["ez_side"] = d["dir_side"]
     per = {"L": {}, "R": {}}
     for _, r in d.iterrows():
@@ -194,7 +197,8 @@ def main() -> None:
                 sens_r = np.mean([r["pred"] == "R" for r in sub if r["mdt"] == "R"])
                 rows.append(dict(tier=tier, peak=peak, size=size, scope=scope, rule=rule,
                                  n=len(unilateral), agree=agree, unclear=unclear,
-                                 left_correct=int(round(sens_l * 8)), right_correct=int(round(sens_r * 5)),
+                                 left_correct=int(sum(r["correct"] for r in sub if r["mdt"] == "L")),
+                                 right_correct=int(sum(r["correct"] for r in sub if r["mdt"] == "R")),
                                  balanced_acc=round((sens_l + sens_r) / 2, 3),
                                  agree_excl_P024=agree_ex, n_excl_P024=n_ex))
     summary = pd.DataFrame(rows)
@@ -293,7 +297,7 @@ def main() -> None:
     print("\n=== Largest in-scope cluster at the clinical tier (|z|>=4, >=100 vox) ===")
     for p in pids:
         d = data[p]
-        d = d[(d.peak_abs >= 4) & (d.size_voxels >= 100) & d.in_scope]
+        d = d[(d.peak_abs >= 4) & (d.size_voxels >= 100) & d.in_scope & d.pair_member]
         if d.empty:
             print(f"  {p}: none"); continue
         top = d.sort_values("size_voxels", ascending=False).iloc[0]

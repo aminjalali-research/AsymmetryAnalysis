@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Re-run all 13 spatial-thresholding methods on the F_20_39 patient zAI maps.
+"""Run all 13 spatial-thresholding methods on every patient's zAI map.
 
-For each of the five F_20_39-matched patients, loads the zAI map and brain
-mask, constructs an AsymData instance, applies every method in
-src.thresholding.METHOD_REGISTRY, and writes a per-patient summary CSV.
-
-Also diagnoses why M1 / M9 / M11 / M13 may return zero by printing the input
-distribution statistics and re-running each method with corrected inputs.
+For each patient, loads the zAI map and the age band's brain mask restricted
+to voxels with a computed zAI (non-zero), constructs an AsymData instance,
+applies every method in src.thresholding.METHOD_REGISTRY, and writes a
+per-patient summary. Coverage is relative to that analysis region. Cluster
+counts include both members of each mirrored pair (the zAI map is antisymmetric).
 
 Outputs:
   results_zscore/asymmetry/summary/all_patients_method_summary.csv (overwritten)
@@ -26,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import pandas as _pd  # noqa: E402
-from src.thresholding import AsymData, METHOD_REGISTRY  # noqa: E402
+from src.thresholding import AsymData, CLUSTER_CONNECTIVITY, METHOD_REGISTRY  # noqa: E402
 from ez_ground_truth import EZ_GROUND_TRUTH  # noqa: E402
 
 # 2026-06 cohort: 17 analyzable patients (ez_ground_truth), each age-matched to
@@ -83,7 +82,7 @@ def load_perfusion(pid: str) -> np.ndarray | None:
 def n_clusters(mask: np.ndarray) -> int:
     if not mask.any():
         return 0
-    structure = ndimage.generate_binary_structure(3, 1)
+    structure = ndimage.generate_binary_structure(3, CLUSTER_CONNECTIVITY)
     _, n = ndimage.label(mask, structure=structure)
     return int(n)
 
@@ -133,10 +132,13 @@ def main() -> None:
                 diagnostics.append("")
                 continue
             mask_cache[band] = load_brain_mask(band)
-        brain_mask = mask_cache[band]
+        zai = load_zai(pid)
+        # Analysis region = band brain mask AND voxels where zAI was computed.
+        # Empty (zero) voxels would otherwise skew percentile, mixture, Otsu
+        # and noise-scale estimates and inflate the coverage denominator.
+        brain_mask = mask_cache[band] & (zai != 0)
         brain_n = int(brain_mask.sum())
 
-        zai = load_zai(pid)
         perf = load_perfusion(pid)
         processed += 1
 

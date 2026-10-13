@@ -3,18 +3,43 @@
 Interactive Overlay Viewer — zAI canonical (post-2026-05-04 pivot)
 
 Menu-driven launcher for FSLeyes that visualizes the canonical
-post-cleanup pipeline outputs:
+Pipeline B outputs:
 
-  - Anatomy (Dataset, Dataset MNI)
+  - Raw anatomy in ORIGINAL space (Dataset/<PID>/; optional legacy
+    "Dataset MNI/<PID>/" perfusion if present)
   - Pipeline B Step 1-2: raw voxel z-score maps (results_zscore/patients/)
   - Pipeline B Step 3: voxel zAI maps (results_zscore/asymmetry/patients/)
   - Pipeline B Step 3 (clinical): gray-matter zAI maps (results_zscore/clinical/)
 
-All references to deleted directories (results/, results_voxel/,
-results_voxel_roi/, laterality_maps/, *_ez_analysis/, etc.) have been
-removed in the Phase 2 cleanup pass.
+Space: the canonical results_zscore/ maps live in the left-right SYMMETRIC
+template space (symreg/). Whenever zAI / clinical maps are displayed, the
+underlay T1 is symreg/templates/T1_sym.nii.gz and the parcellation is
+symreg/sym_perf/<PID>_aparc_sym.nii.gz (when both exist). Pass --orig to
+force the original-space Dataset/<PID>/ T1 + aparc+aseg instead (NOT
+voxel-aligned with the symmetric-space zAI maps; for debugging only).
+Menu items 1-2 always show original-space raw anatomy.
+
+Reading zAI: the zAI map is antisymmetric, zAI(v) = -zAI(mirror v).
+Red (positive) = this voxel is MORE perfused than its mirror voxel; blue
+(negative) = LESS perfused than its mirror. Positive zAI means L>R only for
+voxels in the left hemisphere. The predicted EZ side comes from
+direction-of-abnormality inference (cluster report columns direction_class /
+ez_side_pred: the hemisphere that deviates from controls), not from the sign
+of zAI alone.
+
+The viewer does not read results/, results_voxel/ or other legacy result
+directories.
+
+Menu: 16 numbered options (1-16) plus S (switch patient) and 0 (exit):
+  1-2   raw anatomy (original space)
+  3-5   voxel z-score vs controls (supplementary)
+  6-12  voxel zAI views (6 continuous, 7 sign maps, 8 significant,
+        9 clinical GM, 10 top-N clusters, 11 37-ROI mask, 12 combined)
+  13-16 utilities (file list, quick commands, patient report,
+        island-cleaned overlay)
 """
 
+import argparse
 import subprocess
 from pathlib import Path
 import time
@@ -44,20 +69,52 @@ except Exception:
 # Source: CLAUDE.md "34 Cortical + 6 Subcortical Paired Regions" (the 6
 # subcortical labels are 3 pairs: thalamus, hippocampus, amygdala). The
 # remaining 3 pairs in the CLAUDE.md doc (caudate / putamen / pallidum) are
-# basal ganglia and not part of the surgeon-relevant EZ region set, so they
+# basal ganglia and not part of the clinically relevant EZ region set, so they
 # are intentionally NOT included here.
 # ---------------------------------------------------------------------------
 SUBCORTICAL_LABELS = [10, 49, 17, 53, 18, 54]                 # thalamus, hippocampus, amygdala (L+R)
 CORTICAL_LABELS = list(range(1001, 1036)) + list(range(2001, 2036))  # 34 cortical L+R
 CLINICAL_ROI_LABELS = SUBCORTICAL_LABELS + CORTICAL_LABELS    # 76 labels = 37 ROI pairs
 
+# Symmetric-template anatomy (Pipeline B canonical space; see symreg/).
+SYM_T1 = "symreg/templates/T1_sym.nii.gz"
+SYM_APARC_FMT = "symreg/sym_perf/{pid}_aparc_sym.nii.gz"
+
+
+def _cluster_physical_side(row, mean_col):
+    """Physical hemisphere with HIGHER perfusion for a zAI cluster row.
+
+    zAI is antisymmetric, so a positive cluster in the left hemisphere and a
+    negative cluster in the right hemisphere both mean L > R. Uses the CSV's
+    dominant_side column when present; otherwise derives it from the cluster
+    hemisphere (cluster_hemi column, else the "L-"/"R-" primary_region
+    prefix, else centroid_x sign in RAS mm).
+    """
+    ds = row.get("dominant_side") if hasattr(row, "get") else None
+    if isinstance(ds, str) and ds.strip().upper() in ("L", "R"):
+        return ds.strip().upper()
+    hemi = row.get("cluster_hemi") if hasattr(row, "get") else None
+    if not (isinstance(hemi, str) and hemi.strip().upper() in ("L", "R")):
+        hemi = None
+        region = str(row.get("primary_region", ""))
+        if region[:2] in ("L-", "R-"):
+            hemi = region[0]
+        else:
+            try:
+                hemi = "L" if float(row.get("centroid_x")) < 0 else "R"
+            except (TypeError, ValueError):
+                return "?"
+    hemi = hemi.strip().upper()
+    return "L" if (float(row[mean_col]) > 0) == (hemi == "L") else "R"
+
 
 class InteractiveOverlayViewer:
     """Interactive viewer for canonical pipeline outputs."""
 
-    def __init__(self, patient_id=None):
+    def __init__(self, patient_id=None, use_sym=True):
         self.base_dir = Path(".")
         self.patient_id = patient_id
+        self.use_sym = use_sym
 
         if patient_id:
             self._set_patient_files(patient_id)
@@ -69,7 +126,9 @@ class InteractiveOverlayViewer:
         """Set file paths for a specific patient (canonical paths only)."""
         self.patient_id = patient_id
 
-        # Anatomy & raw inputs (Dataset/, Dataset MNI/)
+        # ORIGINAL-space raw anatomy & inputs (Dataset/). Used ONLY by the
+        # raw-anatomy menu items (1-2); NOT voxel-aligned with the
+        # symmetric-space zAI / clinical maps.
         self.freesurfer_files = {
             "T1w": f"Dataset/{patient_id}/T1w_acpc_dc_restore.nii.gz",
             "Parcellation": f"Dataset/{patient_id}/aparc+aseg.nii.gz",
@@ -77,10 +136,27 @@ class InteractiveOverlayViewer:
             "Perfusion_Resampled": f"Dataset/{patient_id}/{patient_id}_perfusion_calib_resampled_to_T1w.nii.gz",
         }
 
-        # MNI-space anatomy (Dataset MNI/)
+        # Optional legacy original-space folder ("Dataset MNI/<PID>/"); only
+        # some patients have it. Every use is guarded by an existence check.
         self.mni_t1w = f"Dataset MNI/{patient_id}/T1w_restore.nii.gz"
         self.mni_perfusion = f"Dataset MNI/{patient_id}/perfusion_calib.nii.gz"
         self.mni_parcellation = f"Dataset MNI/{patient_id}/aparc+aseg.nii.gz"
+
+        # Underlay anatomy for zAI / clinical maps. The canonical
+        # results_zscore/ maps are in the left-right SYMMETRIC template space,
+        # so default to the symmetric T1 template + the patient's aparc warped
+        # into it. Fall back to original space only with --orig or if the
+        # symmetric files are missing.
+        sym_t1 = SYM_T1
+        sym_parc = SYM_APARC_FMT.format(pid=patient_id)
+        if self.use_sym and Path(sym_t1).exists() and Path(sym_parc).exists():
+            self.space = "symmetric"
+            self.overlay_t1 = sym_t1
+            self.overlay_parc = sym_parc
+        else:
+            self.space = "original"
+            self.overlay_t1 = self.freesurfer_files["T1w"]
+            self.overlay_parc = self.freesurfer_files["Parcellation"]
 
         # Pipeline B — raw voxel z-score maps (results_zscore/patients/<PID>/)
         # File pattern: <PID>_vs_<group>_zscore.nii.gz, _hyper_*, _hypo_*
@@ -127,7 +203,7 @@ class InteractiveOverlayViewer:
         clin_zai = self.clinical_dir / f"{pid}_clinical_zai_lateralized_significant.nii.gz"
         return {
             "anatomy": Path(self.freesurfer_files["T1w"]).exists(),
-            "mni_anatomy": Path(self.mni_t1w).exists(),
+            "sym_anatomy": self.space == "symmetric",
             "raw_zscore": bool(self.zscore_control_files),
             "zai": zai_path.exists(),
             "clinical": clin_zai.exists() or self.clinical_dir.exists(),
@@ -137,8 +213,8 @@ class InteractiveOverlayViewer:
         """Compact one-line availability summary for the menu header."""
         avail = self._detect_available_data()
         labels = {
-            "anatomy": "anatomy",
-            "mni_anatomy": "MNI anatomy",
+            "anatomy": "orig anatomy",
+            "sym_anatomy": "sym-space underlay",
             "raw_zscore": "raw z-score",
             "zai": "zAI",
             "clinical": "clinical",
@@ -232,7 +308,15 @@ class InteractiveOverlayViewer:
 
         print("[*] Checking canonical file availability:")
 
-        print("\n  Anatomy (Dataset/):")
+        print(f"\n  zAI underlay ({self.space} space):")
+        for name, path in [("T1", self.overlay_t1), ("Parcellation", self.overlay_parc)]:
+            mark = "[+]" if Path(path).exists() else "[-]"
+            print(f"     {mark} {name}: {path}")
+        if self.space == "original":
+            print("     [!] zAI maps are in SYMMETRIC space; the original-space underlay "
+                  "is not voxel-aligned with them.")
+
+        print("\n  Raw anatomy, ORIGINAL space (Dataset/; menu items 1-2 only):")
         for name, path in self.freesurfer_files.items():
             if Path(path).exists():
                 size_mb = Path(path).stat().st_size / (1024**2)
@@ -240,17 +324,18 @@ class InteractiveOverlayViewer:
             else:
                 print(f"     [-] {name}: {path} - NOT FOUND")
 
-        print("\n  MNI anatomy (Dataset MNI/):")
-        for name, path in [
-            ("MNI T1w", self.mni_t1w),
-            ("MNI Perfusion", self.mni_perfusion),
-            ("MNI Parcellation", self.mni_parcellation),
-        ]:
-            if Path(path).exists():
-                size_mb = Path(path).stat().st_size / (1024**2)
-                print(f"     [+] {name}: {path} ({size_mb:.1f} MB)")
-            else:
-                print(f"     [-] {name}: {path} - NOT FOUND")
+        if Path(self.mni_t1w).parent.exists():
+            print("\n  Legacy original-space folder (Dataset MNI/):")
+            for name, path in [
+                ("T1w", self.mni_t1w),
+                ("Perfusion", self.mni_perfusion),
+                ("Parcellation", self.mni_parcellation),
+            ]:
+                if Path(path).exists():
+                    size_mb = Path(path).stat().st_size / (1024**2)
+                    print(f"     [+] {name}: {path} ({size_mb:.1f} MB)")
+                else:
+                    print(f"     [-] {name}: {path} - NOT FOUND")
 
         print("\n  Pipeline B Step 1-2 — raw voxel z-score (results_zscore/patients/):")
         if self.zscore_control_files:
@@ -355,7 +440,10 @@ class InteractiveOverlayViewer:
     # ------------------------------------------------------------------
 
     def view_basic_anatomy(self):
-        """View T1w anatomy with parcellation overlay."""
+        """View raw T1w anatomy + parcellation in ORIGINAL space (Dataset/).
+
+        Not voxel-aligned with the symmetric-space zAI maps.
+        """
         overlays = [
             {
                 "file": self.freesurfer_files["Parcellation"],
@@ -366,7 +454,7 @@ class InteractiveOverlayViewer:
             }
         ]
         self.run_fsleyes_overlay(
-            "Basic Anatomy: T1w + Parcellation",
+            "Raw Anatomy (ORIGINAL space, not aligned with zAI): T1w + Parcellation",
             self.freesurfer_files["T1w"],
             overlays,
         )
@@ -376,7 +464,7 @@ class InteractiveOverlayViewer:
     # ------------------------------------------------------------------
 
     def view_perfusion_comparison(self):
-        """Compare T1w-space and MNI-space perfusion."""
+        """Raw perfusion on raw T1w, ORIGINAL space (not aligned with zAI)."""
         overlays = [
             {
                 "file": self.freesurfer_files["Perfusion_Resampled"],
@@ -396,11 +484,11 @@ class InteractiveOverlayViewer:
                 "colormap": "cool",
                 "range": "0 80",
                 "alpha": "40",
-                "name": "Perfusion (MNI raw)",
+                "name": "Perfusion (legacy Dataset MNI, raw)",
             })
 
         self.run_fsleyes_overlay(
-            "Perfusion Comparison",
+            "Raw Perfusion (ORIGINAL space, not aligned with zAI)",
             self.freesurfer_files["T1w"],
             overlays,
         )
@@ -560,13 +648,12 @@ class InteractiveOverlayViewer:
         return True
 
     def view_zai_asymmetry_map(self):
-        """zAI asymmetry map — L vs R deviation from controls.
+        """zAI asymmetry map (continuous, control-referenced).
 
-        Each voxel shows whether the LEFT z-score is higher or lower
-        than the RIGHT z-score at the mirror location. Primary
-        lateralization map.
-        Red/warm = left side more deviant from controls.
-        Blue/cool = right side more deviant from controls.
+        zAI(v) = control-standardized asymmetry of voxel v vs its mirror;
+        antisymmetric, zAI(v) = -zAI(mirror v).
+        Red (positive) = voxel more perfused than its mirror.
+        Blue (negative) = voxel less perfused than its mirror.
         """
         if not self._check_zai():
             return
@@ -575,14 +662,15 @@ class InteractiveOverlayViewer:
         mean_f = f"{self.zscore_group_dir}/{group}/mean_perfusion.nii.gz"
         ai_f = str(self.zai_files["asymmetry_zscore"])
 
-        print(f"\n[*] zAI ASYMMETRY MAP — L vs R Deviation from Controls")
+        print(f"\n[*] zAI ASYMMETRY MAP — voxel vs mirror, control-referenced")
         print(f"   Patient: {self.patient_id}")
-        print(f"   Red = left hemisphere MORE deviant from controls")
-        print(f"   Blue = right hemisphere MORE deviant from controls")
+        print(f"   Red  = voxel higher than its mirror (positive zAI)")
+        print(f"   Blue = voxel lower than its mirror (negative zAI)")
+        print(f"   (antisymmetric: each finding appears red on one side, blue on the other)")
 
         cmd = f"fsleyes '{mean_f}' "
         cmd += f"'{ai_f}' -cm brain_colours_diverging_bwr -dr -3 3 -a 75 "
-        cmd += f"-n 'zAI (L-R)' &"
+        cmd += f"-n 'zAI (voxel vs mirror)' &"
 
         print(f"\n  Command:\n  {cmd}\n")
         try:
@@ -644,14 +732,19 @@ class InteractiveOverlayViewer:
                 print(f"  [!] Error: {e}")
 
     # ------------------------------------------------------------------
-    # OPTION 7: Lateralized Dominance Maps (Left-dominant vs Right-dominant)
+    # OPTION 7: zAI sign maps (positive vs negative, full brain)
     # ------------------------------------------------------------------
 
     def view_zai_dominance(self):
-        """zAI lateralized dominance: red=Left dominant, blue=Right dominant.
+        """Raw zAI sign maps from 02_compute_zai.py.
 
-        Shows EACH bilateral pair on its dominant side only (clean,
-        clinically interpretable presurgical view).
+        <PID>_asymmetry_left_dominant  = voxels with zAI > threshold
+                                         (voxel higher than its mirror)
+        <PID>_asymmetry_right_dominant = voxels with zAI < -threshold
+                                         (voxel lower than its mirror)
+        Despite the legacy filenames these are NOT hemisphere-specific:
+        every finding appears twice (red on the higher side, blue on the
+        mirror). Use option 9 for the one-sided lateralized clinical maps.
         """
         if not self._check_zai():
             return
@@ -668,18 +761,17 @@ class InteractiveOverlayViewer:
             print(f"    Run: python 02_compute_zai.py --patient {self.patient_id}")
             return
 
-        print(f"\n[*] zAI LATERALIZED DOMINANCE (one-sided per bilateral pair)")
+        print(f"\n[*] zAI SIGN MAPS (full brain, both members of each pair shown)")
         print(f"   Patient: {self.patient_id}")
-        print(f"   Red = LEFT-dominant voxels (L > R; "
-              f"interictally suggests RIGHT EZ)")
-        print(f"   Blue = RIGHT-dominant voxels (R > L; "
-              f"interictally suggests LEFT EZ)")
+        print(f"   Red  = voxel higher than its mirror (zAI > +thr)")
+        print(f"   Blue = voxel lower than its mirror (zAI < -thr)")
+        print(f"   Predicted EZ side: see option 15 (direction_class / ez_side_pred)")
 
         cmd = f"fsleyes '{mean_f}' "
         cmd += (f"'{left_f}' -cm red -dr 0.5 3 -a 85 "
-                f"-n 'Left-dominant (L>R; suggests R EZ if interictal)' ")
+                f"-n 'zAI positive (voxel > mirror)' ")
         cmd += (f"'{right_f}' -cm blue -dr 0.5 3 -a 85 "
-                f"-n 'Right-dominant (R>L; suggests L EZ if interictal)' &")
+                f"-n 'zAI negative (voxel < mirror)' &")
 
         print(f"\n  Command:\n  {cmd}\n")
         try:
@@ -695,7 +787,7 @@ class InteractiveOverlayViewer:
     def view_zai_significant(self):
         """Significant zAI clusters — most focal asymmetric findings.
 
-        Shows voxels where L-R asymmetry exceeds the surgeon-facing
+        Shows voxels where voxel-vs-mirror asymmetry exceeds the
         clinical threshold |zAI| >= 4 (tightened 2026-05-05; was implicitly
         |zAI| >= 3 via the legacy |zAI|>=0.5 display range on the file's
         full continuous values, which let almost all gray-matter voxels
@@ -717,10 +809,11 @@ class InteractiveOverlayViewer:
             print(f"    Run: python 02_compute_zai.py --patient {self.patient_id}")
             return
 
-        threshold = 4.0   # tightened 2026-05-05 for surgeon-facing focality
+        threshold = 4.0   # tightened 2026-05-05 for clinical focality
         print(f"\n[*] SIGNIFICANT zAI CLUSTERS (Focal, |zAI| >= {threshold:g})")
         print(f"   Patient: {self.patient_id}")
-        print(f"   Shows: voxels where L-R asymmetry is at least {threshold:g} SDs")
+        print(f"   Shows: voxels whose asymmetry vs their mirror is at least {threshold:g} SDs")
+        print(f"   Red = voxel higher than its mirror; Blue = lower")
         print(f"   (use option 6 to inspect the continuous map at lower thresholds)")
 
         cmd = f"fsleyes '{mean_f}' "
@@ -738,15 +831,19 @@ class InteractiveOverlayViewer:
             print(f"  [!] Error: {e}")
 
     # ------------------------------------------------------------------
-    # OPTION 9: Clinical zAI (gray matter only, lateralized) — surgeon-facing
+    # OPTION 9: Clinical zAI (gray matter only, lateralized) — patient report view
     # ------------------------------------------------------------------
 
     def view_zai_clinical(self):
         """Clinical-grade zAI — gray-matter only, lateralized dominance.
 
-        This is the surgeon-facing version: white-matter noise removed,
-        bilateral pairs shown only on the dominant side. Recommended
-        for MDT presurgical review.
+        White-matter noise removed; each finding shown once, at the member
+        of the pair with HIGHER perfusion (positive zAI), split by hemisphere:
+          *_lateralized_left_dominant  = positive-zAI clusters in the left
+                                         hemisphere (L > R)
+          *_lateralized_right_dominant = positive-zAI clusters in the right
+                                         hemisphere (R > L)
+        "Higher side" is not the predicted EZ side; see option 15.
 
         Fixed 2026-05-05:
         - default control group to F_20_39 (no interactive prompt that
@@ -767,7 +864,7 @@ class InteractiveOverlayViewer:
 
         # Default to F_20_39 silently; only prompt if the caller has more
         # than one group available (avoids blocking input() in the
-        # surgeon-facing default flow).
+        # patient report default flow).
         group = (self._pick_zscore_group() if len(self.zscore_control_files) > 1
                  else (next(iter(self.zscore_control_files), None) or "FM_20_39"))
         mean_f = f"{self.zscore_group_dir}/{group}/mean_perfusion.nii.gz"
@@ -785,14 +882,16 @@ class InteractiveOverlayViewer:
 
         print(f"\n[*] CLINICAL zAI (Gray Matter Only, Lateralized)")
         print(f"   Patient: {self.patient_id}  |  Controls: {group}")
-        print(f"   Red = LEFT-dominant (L>R; suggests R EZ if interictal)")
-        print(f"   Blue = RIGHT-dominant (R>L; suggests L EZ if interictal)")
+        print(f"   Red  layer = positive-zAI clusters in LEFT hemisphere (L > R)")
+        print(f"   Blue layer = positive-zAI clusters in RIGHT hemisphere (R > L)")
+        print(f"   Continuous layer: red = voxel higher than mirror, blue = lower")
+        print(f"   Predicted EZ side: see option 15 (direction_class / ez_side_pred)")
         print(f"   Display threshold: |zAI| >= {threshold:g}  (use option 6 for continuous)")
 
         # NOTE: left_dominant / right_dominant are BINARY masks (value 1.0),
         # so -dr 0.5 1 is correct for those layers.
         # The "lateralized_significant" file is CONTINUOUS zAI values;
-        # display it as a diverging map with the surgeon-facing threshold.
+        # display it as a diverging map with the clinical threshold.
         cmd = f"fsleyes '{mean_f}' "
         if sig_f.exists():
             cmd += (
@@ -802,10 +901,10 @@ class InteractiveOverlayViewer:
             )
         if left_f.exists():
             cmd += (f"'{left_f}' -cm red -dr 0.5 1 -a 85 "
-                    f"-n 'Left-dominant (L>R; suggests R EZ if interictal)' ")
+                    f"-n 'Higher on L (L>R)' ")
         if right_f.exists():
             cmd += (f"'{right_f}' -cm blue -dr 0.5 1 -a 85 "
-                    f"-n 'Right-dominant (R>L; suggests L EZ if interictal)' ")
+                    f"-n 'Higher on R (R>L)' ")
         cmd += "&"
 
         print(f"\n  Command:\n  {cmd}\n")
@@ -818,7 +917,7 @@ class InteractiveOverlayViewer:
             print(f"  [!] Error: {e}")
 
     # ------------------------------------------------------------------
-    # OPTION 10: Top-N Dominant Clusters (focal, surgeon-facing)
+    # OPTION 10: Top-N Dominant Clusters (focal)
     # ------------------------------------------------------------------
 
     def view_zai_dominant_clusters(self, top_n=3, threshold=4.0):
@@ -826,7 +925,7 @@ class InteractiveOverlayViewer:
 
         Motivation: the canonical zAI map for some patients (e.g. P013)
         contains 60K+-voxel clusters in non-EZ regions that visually drown
-        out a smaller surgeon-relevant cluster. This view filters to the
+        out a smaller clinically relevant cluster. This view filters to the
         top-N highest-peak clusters and prints their anatomical regions
         + peak values to stdout for clinical context.
 
@@ -843,7 +942,7 @@ class InteractiveOverlayViewer:
         pid = self.patient_id
 
         # Prefer the gray-matter clinical cluster report (cleaner; matches
-        # the surgeon-facing view); fall back to the asymmetry report if
+        # the patient report view); fall back to the asymmetry report if
         # the clinical one isn't present.
         clin_csv = self.clinical_dir / f"{pid}_clinical_zai_cluster_report.csv"
         asym_csv = self.zai_dir / f"{pid}_asymmetry_cluster_report.csv"
@@ -894,18 +993,22 @@ class InteractiveOverlayViewer:
         print(f"  TOP-{top_n} DOMINANT zAI CLUSTERS for {pid}  (|zAI| >= {threshold:g})")
         print(f"  Source: {csv_path.name}  ({tag})")
         print(f"  MDT ground truth: EZ = {ez_side}  ({ez_conf} confidence)")
-        print("  Legend: 'LEFT-dominant'  = L side has MORE blood flow than expected")
-        print("                            (interictally suggests RIGHT EZ).")
-        print("          'RIGHT-dominant' = R side has MORE blood flow than expected")
-        print("                            (interictally suggests LEFT EZ).")
+        print("  Legend: 'higher on L/R' = hemisphere with MORE perfusion than its")
+        print("          mirror (zAI sign combined with cluster hemisphere). This is")
+        print("          not the predicted EZ side: see dir/pred (direction_class /")
+        print("          ez_side_pred = hemisphere deviating from controls) when present.")
         print("=" * 70)
         for _, row in df_top.iterrows():
-            mean_v = row[mean_col]
-            side = "LEFT-dominant " if mean_v > 0 else "RIGHT-dominant"
+            side = _cluster_physical_side(row, mean_col)
+            extra = ""
+            if "direction_class" in row.index and isinstance(row["direction_class"], str):
+                extra += f"  dir={row['direction_class']}"
+            if "ez_side_pred" in row.index and isinstance(row["ez_side_pred"], str):
+                extra += f"  pred={row['ez_side_pred']}"
             print(
-                f"  #{int(row['cluster_id']):3d}  {side}  "
+                f"  #{int(row['cluster_id']):3d}  higher on {side}  "
                 f"peak={row[peak_col]:+6.2f}  size={int(row['size_voxels']):6d} vox  "
-                f"region={row['primary_region']}"
+                f"region={row['primary_region']}{extra}"
             )
         print("=" * 70)
         print()
@@ -979,9 +1082,9 @@ class InteractiveOverlayViewer:
         group = (next(iter(self.zscore_control_files), None) or "FM_20_39")
         mean_f = f"{self.zscore_group_dir}/{group}/mean_perfusion.nii.gz"
         ai_f = str(self.zai_files["asymmetry_zscore"])
-        t1_f = self.freesurfer_files["T1w"]
+        t1_f = self.overlay_t1
 
-        # Use T1w as background if available; group mean otherwise
+        # Use the (symmetric-space) T1 as background if available; group mean otherwise
         bg = t1_f if Path(t1_f).exists() else mean_f
 
         cmd = (
@@ -1005,12 +1108,12 @@ class InteractiveOverlayViewer:
         """Restrict zAI display to the 37 clinically-relevant
         Desikan-Killiany regions (3 subcortical pairs + 34 cortical pairs).
 
-        Useful when the surgeon wants to suppress non-cortical / non-EZ
+        Useful to suppress non-cortical / non-EZ
         regions (e.g. cerebellum, brainstem, ventricles) that FSLeyes
         would otherwise show as noisy zAI signal.
 
         Also prints the top-N regions (by peak |zAI|) limited to the
-        37-ROI mask, so the surgeon can read the focal asymmetry hits
+        37-ROI mask, so the reader can see the focal asymmetry hits
         without having to scroll through cluster reports.
         """
         if not self._check_zai():
@@ -1021,7 +1124,8 @@ class InteractiveOverlayViewer:
             return
 
         pid = self.patient_id
-        parc_path = Path(self.freesurfer_files["Parcellation"])
+        parc_path = Path(self.overlay_parc)
+        print(f"  Parcellation ({self.space} space): {parc_path}")
         if not parc_path.exists():
             print(f"[!] Parcellation not found: {parc_path}")
             print(f"    Cannot build 37-ROI clinical mask without aparc+aseg.")
@@ -1127,10 +1231,12 @@ class InteractiveOverlayViewer:
                 side = "LEFT"
             else:  # 49, 53, 54 or 2001-2035
                 side = "RIGHT"
+            # ROI hemisphere + zAI sign -> side with higher perfusion
+            higher = side[0] if peak_v > 0 else ("R" if side == "LEFT" else "L")
             name = _FS_NAMES.get(lbl, f"label-{lbl}")
             tag = "(suprathr.)" if n_thr > 0 else "(subthr.)"
             print(
-                f"    {side:5s}  peak={peak_v:+6.2f}  "
+                f"    {side:5s}  peak={peak_v:+6.2f} (higher on {higher})  "
                 f"#vox >= {threshold:g}: {n_thr:6d}  "
                 f"{tag:12s}  {name} (label {lbl})"
             )
@@ -1150,7 +1256,7 @@ class InteractiveOverlayViewer:
         print(f"  [+] 37-ROI masked zAI written: {tmp_path}")
 
         # Launch FSLeyes
-        t1_f = self.freesurfer_files["T1w"]
+        t1_f = self.overlay_t1
         bg = t1_f if Path(t1_f).exists() else (
             f"{self.zscore_group_dir}/FM_20_39/mean_perfusion.nii.gz"
         )
@@ -1176,7 +1282,8 @@ class InteractiveOverlayViewer:
 
         Layer 1: group mean perfusion (gray background)
         Layer 2: continuous zAI map (semi-transparent, diverging)
-        Layer 3: clinical lateralized dominance (red/blue, dominant-side-only)
+        Layer 3: clinical lateralized maps (red = higher on L, blue = higher on R;
+                 each finding shown once, at the higher-perfused member)
         Layer 4: brain region boundaries (faint, anatomical reference)
         """
         if not self._check_zai():
@@ -1203,11 +1310,13 @@ class InteractiveOverlayViewer:
 
         print(f"\n[*] COMBINED PRESURGICAL VIEW — {tag}")
         print(f"   Patient: {self.patient_id}  |  Controls: {group}")
-        print(f"   Layers: mean perfusion + zAI continuous + lateralized dominance + regions")
+        print(f"   Layers: mean perfusion + zAI continuous + lateralized maps + regions")
+        print(f"   zAI: red = voxel higher than mirror, blue = lower")
+        print(f"   Lateralized: red = higher on L (L>R), blue = higher on R (R>L)")
         print(f"   Toggle layers in FSLeyes (eye icon) to focus on specific information.")
 
         # Threshold tightened 2026-05-05 from |zAI|>=3 to |zAI|>=4 for
-        # surgeon-facing focality (option 6 = continuous, no threshold).
+        # clinical focality (option 6 = continuous, no threshold).
         threshold = 4.0
         print(f"   Continuous zAI display threshold: |zAI| >= {threshold:g}")
 
@@ -1218,10 +1327,10 @@ class InteractiveOverlayViewer:
         )
         if left_f.exists():
             cmd += (f"'{left_f}' -cm red -dr 0.5 1 -a 80 "
-                    f"-n 'Left-dominant (L>R; suggests R EZ if interictal)' ")
+                    f"-n 'Higher on L (L>R)' ")
         if right_f.exists():
             cmd += (f"'{right_f}' -cm blue -dr 0.5 1 -a 80 "
-                    f"-n 'Right-dominant (R>L; suggests L EZ if interictal)' ")
+                    f"-n 'Higher on R (R>L)' ")
         if Path(parc_f).exists():
             cmd += f"'{parc_f}' -cm random -dr 1 2035 -a 15 -n 'Brain Regions' "
         cmd += "&"
@@ -1251,67 +1360,78 @@ class InteractiveOverlayViewer:
         """Print canonical FSLeyes command snippets the user can copy/paste."""
 
         pid = self.patient_id
+        t1 = self.overlay_t1
+        parc = self.overlay_parc
         print("\n[*] QUICK FSLEYES COMMANDS (canonical zAI paths)")
         print("=" * 70)
         print(f"Commands for Patient: {pid}")
+        print(f"zAI underlay space: {self.space}  (T1: {t1})")
+        print("zAI colours: red = voxel higher than its mirror, blue = lower")
         print("=" * 70)
         print()
 
-        # ---- 1. Anatomy + parcellation ----
-        print("# Anatomy + parcellation:")
-        print(f"fsleyes Dataset/{pid}/T1w_acpc_dc_restore.nii.gz \\")
-        print(f"        Dataset/{pid}/aparc+aseg.nii.gz \\")
+        # ---- 1. Anatomy + parcellation (zAI underlay space) ----
+        print(f"# Anatomy + parcellation ({self.space} space, aligned with zAI):")
+        print(f"fsleyes {t1} \\")
+        print(f"        {parc} \\")
         print("        -cm random -dr 1 2035 -a 30 -n 'Parcellation' &")
         print()
+        if self.space == "symmetric":
+            print("# Raw anatomy, ORIGINAL space (NOT aligned with zAI maps):")
+            print(f"fsleyes {self.freesurfer_files['T1w']} \\")
+            print(f"        {self.freesurfer_files['Parcellation']} \\")
+            print("        -cm random -dr 1 2035 -a 30 -n 'Parcellation (orig)' &")
+            print()
 
         # ---- 2. zAI overlay (canonical, primary clinical product) ----
         print("# zAI overlay (canonical, primary clinical product):")
-        print(f"fsleyes Dataset/{pid}/T1w_acpc_dc_restore.nii.gz \\")
+        print(f"fsleyes {t1} \\")
         print(f"        results_zscore/asymmetry/patients/{pid}/{pid}_asymmetry_zscore.nii.gz \\")
         print("        -cm brain_colours_diverging_bwr -dr -3 3 -a 75 -n 'zAI' &")
         print()
 
         # ---- 3. zAI lateralized dominance (raw) ----
-        print("# zAI lateralized dominance (raw, full brain):")
-        print("# (red = LEFT side has more blood flow; blue = RIGHT side has more)")
-        print(f"fsleyes Dataset/{pid}/T1w_acpc_dc_restore.nii.gz \\")
+        print("# zAI sign maps (raw, full brain; both members of each pair shown):")
+        print("# (red = voxel higher than its mirror; blue = voxel lower than its mirror)")
+        print(f"fsleyes {t1} \\")
         print(f"        results_zscore/asymmetry/patients/{pid}/{pid}_asymmetry_left_dominant.nii.gz \\")
         print("        -cm red -dr 0.5 3 -a 80 "
-              "-n 'Left-dominant (L>R; suggests R EZ if interictal)' \\")
+              "-n 'zAI positive (voxel > mirror)' \\")
         print(f"        results_zscore/asymmetry/patients/{pid}/{pid}_asymmetry_right_dominant.nii.gz \\")
         print("        -cm blue -dr 0.5 3 -a 80 "
-              "-n 'Right-dominant (R>L; suggests L EZ if interictal)' &")
+              "-n 'zAI negative (voxel < mirror)' &")
         print()
 
         # ---- 4. Significant zAI clusters ----
         print("# Significant zAI clusters (statistical mask):")
-        print(f"fsleyes Dataset/{pid}/T1w_acpc_dc_restore.nii.gz \\")
+        print(f"fsleyes {t1} \\")
         print(f"        results_zscore/asymmetry/patients/{pid}/{pid}_asymmetry_significant.nii.gz \\")
         print("        -cm red-yellow -dr 0.5 1 -a 90 -n 'zAI significant' &")
         print()
 
-        # ---- 5. Clinical lateralized clusters (surgeon-facing) ----
+        # ---- 5. Clinical lateralized clusters (patient report view) ----
         if self.clinical_dir.exists():
-            print("# Clinical lateralized clusters (gray-matter only, surgeon-facing):")
-            print("# (red = LEFT side high blood flow; blue = RIGHT side high)")
-            print(f"fsleyes Dataset/{pid}/T1w_acpc_dc_restore.nii.gz \\")
+            print("# Clinical lateralized clusters (gray-matter only, patient report view):")
+            print("# (red = positive-zAI clusters in left hemisphere, L>R;")
+            print("#  blue = positive-zAI clusters in right hemisphere, R>L)")
+            print(f"fsleyes {t1} \\")
             print(f"        results_zscore/clinical/{pid}/{pid}_clinical_zai_lateralized_left_dominant.nii.gz \\")
             print("        -cm red -dr 0.5 1 -a 85 "
-                  "-n 'Left-dominant (L>R; suggests R EZ if interictal)' \\")
+                  "-n 'Higher on L (L>R)' \\")
             print(f"        results_zscore/clinical/{pid}/{pid}_clinical_zai_lateralized_right_dominant.nii.gz \\")
             print("        -cm blue -dr 0.5 1 -a 85 "
-                  "-n 'Right-dominant (R>L; suggests L EZ if interictal)' &")
+                  "-n 'Higher on R (R>L)' &")
             print()
 
         # ---- 6. Combined presurgical (zAI + clinical + parcellation) ----
         print("# COMBINED presurgical (zAI continuous + clinical clusters + parcellation):")
-        print(f"fsleyes Dataset/{pid}/T1w_acpc_dc_restore.nii.gz \\")
+        print(f"fsleyes {t1} \\")
         print(f"        results_zscore/asymmetry/patients/{pid}/{pid}_asymmetry_zscore.nii.gz \\")
         print("        -cm brain_colours_diverging_bwr -dr -3 3 -a 60 -n 'zAI' \\")
         if self.clinical_dir.exists():
             print(f"        results_zscore/clinical/{pid}/{pid}_clinical_zai_lateralized_significant.nii.gz \\")
             print("        -cm hot -dr 0.5 1 -a 90 -n 'Significant' \\")
-        print(f"        Dataset/{pid}/aparc+aseg.nii.gz \\")
+        print(f"        {parc} \\")
         print("        -cm random -dr 1 2035 -a 25 -n 'Parcellation' &")
         print()
 
@@ -1328,12 +1448,12 @@ class InteractiveOverlayViewer:
     # OPTION 15: Clinical Report (replaces former Custom Overlay Builder)
     # ------------------------------------------------------------------
     #
-    # Surgeon-facing per-patient report. Imports the analyzer from
+    # Per-patient report. Imports the analyzer from
     # 06_clinical_interpretation.py, runs it for the current patient with
     # the canonical |zAI|>=4 / size>=100 thresholds, prints the report
     # to stdout, and (if FSLeyes is available + the cluster_labels NIfTI
     # is on disk) offers to launch the top-N cluster overlay (option 10
-    # logic) so the surgeon can flip from the deterministic answer to
+    # logic) so the reader can flip from the deterministic answer to
     # the spatial view in one keystroke.
 
     def view_clinical_report(self):
@@ -1401,10 +1521,10 @@ class InteractiveOverlayViewer:
         else:
             print("MDT EZ: (not in ground-truth table)")
         print(f"Available data: {self._availability_str()}")
-        print("Tip: 'right-dominant' cluster in temporal lobe usually means "
-              "LEFT EZ")
-        print("     (interictal hypoperfusion of EZ side -> opposite side "
-              "looks 'dominant').")
+        print(f"zAI underlay: {self.space} space")
+        print("zAI colours: red = voxel higher than its mirror; blue = lower.")
+        print("Predicted EZ side = hemisphere deviating from controls "
+              "(option 15, ez_side_pred).")
         print("=" * 70)
 
         # zAI gating: if no zAI, mark options 6-10 unavailable
@@ -1417,8 +1537,8 @@ class InteractiveOverlayViewer:
         print("   S. Switch Patient")
         print()
         print("Anatomy:")
-        print("   1. Basic Anatomy (T1w + Parcellation)")
-        print("   2. Perfusion Comparison (Dataset vs Dataset MNI)")
+        print("   1. Raw Anatomy, ORIGINAL space (T1w + Parcellation; not aligned with zAI)")
+        print("   2. Raw Perfusion, ORIGINAL space (not aligned with zAI)")
         print()
         print("Pipeline B - Voxel z-score vs Controls (Supplementary):")
         print(f"   3. Raw Voxel z-Score Map (gray-matter){rawz_tag}")
@@ -1427,11 +1547,11 @@ class InteractiveOverlayViewer:
         print()
         print("Pipeline B - Voxel zAI vs Controls (PRIMARY CLINICAL PRODUCT):")
         print("   (default threshold |zAI|>=4 for clinical views; option 6 = continuous, no threshold)")
-        print(f"   6. zAI Asymmetry Map (continuous, L vs R){zai_tag}")
-        print(f"   7. Lateralized Dominance Maps "
-              f"(red=LEFT high; blue=RIGHT high){zai_tag}")
+        print(f"   6. zAI Asymmetry Map (continuous, voxel vs mirror){zai_tag}")
+        print(f"   7. zAI Sign Maps "
+              f"(red=voxel>mirror; blue=voxel<mirror){zai_tag}")
         print(f"   8. Significant zAI Clusters (TFCE, |zAI|>=4){zai_tag}")
-        print(f"   9. Clinical zAI (gray matter, surgeon-facing){clin_tag}")
+        print(f"   9. Clinical zAI (gray matter, lateralized){clin_tag}")
         print(f"  10. Top-N Dominant Clusters * (focal: top 3 by peak |zAI|, region print){zai_tag}")
         print(f"  11. 37-ROI Clinical Mask View * (zAI restricted to Desikan-Killiany){zai_tag}")
         print(f"  12. Combined Presurgical View (RECOMMENDED){zai_tag}")
@@ -1439,7 +1559,7 @@ class InteractiveOverlayViewer:
         print("Utilities:")
         print("  13. Show File List (canonical paths only)")
         print("  14. Show Quick FSLeyes Commands (canonical zAI paths)")
-        print(f"  15. Clinical Report * (surgeon-facing, |zAI|>=4){zai_tag}")
+        print(f"  15. Patient Report * (|zAI|>=4, predicted side){zai_tag}")
         print(f"  16. Island-Cleaned zAI Overlay * (speckle-free NIfTI + montage){zai_tag}")
         print("   0. Exit")
         print()
@@ -1505,8 +1625,16 @@ class InteractiveOverlayViewer:
 
 def main():
     """Main execution function."""
+    parser = argparse.ArgumentParser(
+        description="Interactive FSLeyes launcher for Pipeline B zAI maps.")
+    parser.add_argument(
+        "--orig", action="store_true",
+        help="Use original-space Dataset/<PID>/ T1 + aparc+aseg as the zAI "
+             "underlay instead of the symmetric template (default: symmetric "
+             "when symreg files exist). Not voxel-aligned with zAI maps.")
+    args = parser.parse_args()
     try:
-        viewer = InteractiveOverlayViewer()
+        viewer = InteractiveOverlayViewer(use_sym=not args.orig)
         viewer.main_loop()
     except KeyboardInterrupt:
         print("\nViewer stopped by user. Goodbye!")

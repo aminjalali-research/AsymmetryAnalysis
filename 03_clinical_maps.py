@@ -31,15 +31,16 @@ sizes.
 This script produces clean NIfTI maps showing only focal lateralization
 abnormalities in clinically relevant tissue.
 
-Interpretation of zAI values (unchanged from the upstream script):
-  - zAI > 0: abnormally LEFT-dominant perfusion (left higher than right)
-  - zAI < 0: abnormally RIGHT-dominant perfusion (right higher than left)
-
-Note: positive/negative no longer means "hyper/hypo" — it means the side
-that is MORE perfused relative to its contralateral mirror, expressed as
-a deviation from healthy controls. We retain the variable names
-`hyper`/`hypo` only for backward-compatible output filenames; semantically
-they now mean "left-dominant" / "right-dominant" for zAI inputs.
+Interpretation of zAI values:
+  - zAI > 0 at a voxel: that voxel is more perfused than its mirror, beyond
+    the healthy-control range; zAI < 0: less perfused than its mirror.
+  - The map is antisymmetric (zAI(v) = -zAI(mirror v)), so every finding
+    appears twice. The sign alone does NOT say left vs right: a positive
+    cluster in the right hemisphere means right > left.
+  - The `*_lateralized_left_dominant` / `*_right_dominant` maps keep only the
+    positive member of each pair, split by the hemisphere it lies in.
+Variable names `hyper`/`hypo` refer to the sign of zAI, not to perfusion
+direction relative to controls (see the cluster report's direction_class).
 
 Usage:
     python 03_clinical_maps.py                    # 37-ROI mask (default)
@@ -247,7 +248,7 @@ def cluster_filter(binary_map, min_size):
     return filtered, relabeled, clusters
 
 
-def _compute_clinical_outputs(zai_map, base_mask, threshold, min_cluster):
+def _compute_clinical_outputs(zai_map, base_mask, threshold, min_cluster, affine=None):
     """Compute the family of clinical output arrays for a given mask.
 
     `base_mask` is the boolean voxel set that defines the analysis scope
@@ -282,12 +283,19 @@ def _compute_clinical_outputs(zai_map, base_mask, threshold, min_cluster):
     for cl in hypo_clusters:
         cluster_map[cl["mask"]] = -cl["id"]
 
-    # 4. Lateralized: keep only the more abnormal side at each voxel pair
-    zai_mirror = np.flip(clinical_zai, axis=0)
-    dominant_mask = np.abs(clinical_zai) > np.abs(zai_mirror)
-
-    lat_hyper = hyper_filt & dominant_mask
-    lat_hypo = hypo_filt & dominant_mask
+    # 4. Lateralized maps. The zAI map is antisymmetric (zAI(v) = -zAI(mirror v)),
+    # so |zAI| is identical at both voxels of a pair and cannot pick a side.
+    # Each finding is represented once, at the member with HIGHER perfusion
+    # (positive zAI), and split by the hemisphere it lies in:
+    #   left_dominant  = positive-zAI clusters in the left hemisphere  (L > R)
+    #   right_dominant = positive-zAI clusters in the right hemisphere (R > L)
+    if affine is None:
+        raise ValueError("affine is required to assign hemispheres")
+    nx = zai_map.shape[0]
+    x_mm = affine[0, 0] * np.arange(nx) + affine[0, 3]
+    left_hemi = np.broadcast_to((x_mm < 0)[:, None, None], zai_map.shape)
+    lat_hyper = hyper_filt & left_hemi
+    lat_hypo = hyper_filt & ~left_hemi
     lat_hyper, _, lat_hyper_cl = cluster_filter(lat_hyper, min_cluster)
     lat_hypo, _, lat_hypo_cl = cluster_filter(lat_hypo, min_cluster)
 
@@ -396,14 +404,14 @@ def process_patient(patient_id, brain_mask, parc, gm_mask, mean_img, affine,
         primary_base = unmasked_base
         primary_scope = "gray-matter-only (no 37-ROI mask)"
 
-    primary = _compute_clinical_outputs(zai_map, primary_base, threshold, min_cluster)
+    primary = _compute_clinical_outputs(zai_map, primary_base, threshold, min_cluster, affine=affine)
 
     # When the clinical mask is applied (default), also write an unmasked
     # diagnostic variant alongside for QC/exploratory use.
     write_diagnostic_unmasked = apply_clinical_mask and clinical_roi_mask is not None
     if write_diagnostic_unmasked:
         diagnostic = _compute_clinical_outputs(
-            zai_map, unmasked_base, threshold, min_cluster)
+            zai_map, unmasked_base, threshold, min_cluster, affine=affine)
     else:
         diagnostic = None
 
@@ -625,7 +633,7 @@ def plot_clinical_montage(patient_id, mean_img, brain_mask, gm_mask, affine):
         f"{patient_id} - Clinical zAI Map (Gray Matter Only)\n"
         f"Threshold: |zAI| >= {CLINICAL_ZAI_THRESHOLD}, "
         f"Min cluster: {CLINICAL_MIN_CLUSTER} voxels\n"
-        f"Red = abnormally LEFT-dominant, Blue = abnormally RIGHT-dominant",
+        f"Red = voxel higher than its mirror, Blue = lower than its mirror",
         fontsize=13, fontweight="bold",
     )
 

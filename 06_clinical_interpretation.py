@@ -44,10 +44,9 @@ from typing import Optional
 import pandas as pd
 
 # Local
-try:
-    from ez_ground_truth import EZ_GROUND_TRUTH
-except Exception:
-    EZ_GROUND_TRUTH = {}
+BASE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE_DIR))
+from ez_ground_truth import EZ_GROUND_TRUTH  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -57,8 +56,8 @@ except Exception:
 DEFAULT_PEAK_THRESHOLD = 4.0       # |zAI| >= 4, surgeon-grade focal threshold
 DEFAULT_SIZE_THRESHOLD = 100       # >= 100 voxels at MNI 0.8mm iso
 
-CLUSTER_REPORT_DIR = Path("results_zscore/asymmetry/patients")
-DEFAULT_OUTPUT_ROOT = Path("results_zscore/clinical")
+CLUSTER_REPORT_DIR = BASE_DIR / "results_zscore/asymmetry/patients"
+DEFAULT_OUTPUT_ROOT = BASE_DIR / "results_zscore/clinical"
 
 SUBCORTICAL_NAMES = {"thalamus", "hippocampus", "amygdala"}
 
@@ -422,20 +421,28 @@ class ClinicalInterpreter:
         # Legacy rule (fallback):
         #   `left-dominant` (zAI > +threshold) -> assume R hypoperfused -> EZ = R
         #   `right-dominant` (zAI < -threshold) -> assume L hypoperfused -> EZ = L
-        if "ez_side_pred" in df.columns and df["ez_side_pred"].astype(str).str.len().sum() > 0:
-            df["ez_side"] = df["ez_side_pred"].astype(str).str.upper().str[:1]
-            # Defensive: replace empty strings with the legacy fallback.
-            mask_empty = ~df["ez_side"].isin(["L", "R"])
-            df.loc[mask_empty, "ez_side"] = df.loc[mask_empty, "direction"].map(
-                {"left-dominant": "R", "right-dominant": "L"})
+        # The zAI map is antisymmetric, so every finding appears as a mirrored
+        # pair of clusters (one per hemisphere). Each pair must vote once.
+        if "cluster_hemi" in df.columns:
+            hemi = df["cluster_hemi"].fillna("").astype(str).str.upper().str[:1]
         else:
-            # The asymmetry map is antisymmetric, so each finding appears as a
-            # mirrored pair (left-dominant in one hemisphere, right-dominant at
-            # the mirror). Flipping both members would cast opposite votes that
-            # cancel; keep only the left-hemisphere member (RAS x < 0).
-            xcol = "centroid_x" if "centroid_x" in df.columns else None
-            if xcol is not None:
-                df = df[df[xcol] < 0].copy()
+            hemi = df["centroid_x"].map(lambda x: "L" if x < 0 else "R")
+        if "ez_side_pred" in df.columns:
+            ez = df["ez_side_pred"].fillna("").astype(str).str.upper().str[:1]
+        else:
+            ez = pd.Series("", index=df.index)
+        has_pred = ez.isin(["L", "R"])
+        if has_pred.any():
+            # Direction rule: both members carry the same ez_side_pred; keep
+            # the member lying in that hemisphere. Rows without a prediction
+            # (exact ties, missing control stats) are left unassigned.
+            df = df[has_pred & (hemi == ez)].copy()
+            df["ez_side"] = ez[df.index]
+        else:
+            # Legacy polarity flip for cluster reports without direction
+            # columns: keep the left-hemisphere member of each pair;
+            # left-dominant there implies right hypoperfusion (EZ right).
+            df = df[hemi == "L"].copy()
             df["ez_side"] = df["direction"].map({"left-dominant": "R",
                                                   "right-dominant": "L"})
         return df
@@ -463,13 +470,10 @@ class ClinicalInterpreter:
             return "indeterminate"
         if mdt_ez in ("L", "R") and prediction == mdt_ez:
             return "agree"
-        if mdt_ez in ("B-L", "B-R", "B") and prediction in ("L", "R", "B"):
-            # bilateral MDT: agree if predicted side matches dominant or is B
-            if (mdt_ez == "B-L" and prediction == "L") or \
-               (mdt_ez == "B-R" and prediction == "R") or \
-               (mdt_ez == "B" and prediction == "B"):
-                return "agree"
-            return "partial"
+        if mdt_ez == "U":
+            return "mdt-unclear"  # MDT declined to lateralize; not scoreable
+        if mdt_ez == "B":
+            return "agree" if prediction == "B" else "partial"
         return "disagree"
 
     def analyze(self) -> Optional[dict]:

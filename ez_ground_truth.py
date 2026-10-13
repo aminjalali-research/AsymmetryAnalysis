@@ -8,13 +8,18 @@ Table 11 (Patient Demographics and Clinical Details, pp. 60-65). The "Clinical
 Diagnosis" column there is the MDT-consensus final diagnosis and is the ground
 truth used for all concordance analyses.
 
-Patient mapping (this project's imaging IDs P013-P027 -> thesis patient #1-17) was
-established by matching age + sex + lesion. 14 of the project's imaging patients map
-to thesis patients. Per project policy (2026-06-22): FOLLOW THE THESIS — any patient
-not present in the thesis is DISCARDED. P014 (37/F, R fusiform cortical thickening)
-matches no thesis patient and is therefore EXCLUDED from the cohort. Thesis patients
-#15 (30/M LTLE), #16 (31/F LTLE), #17 (27/F RTLE) have no imaging in this project's
-Dataset/ and are not analyzable here.
+Patient mapping: this project's imaging IDs P013-P030 (P014 excluded) map to
+thesis patients #1-17, established by matching age + sex + lesion. The mapping is
+sequential: P013 -> #1 ... P027 -> #14 (skipping P014), and P028/P029/P030 =
+thesis #15/#16/#17. All 17 mapped patients have imaging in this project's Dataset/
+(P028-P030 included) and rows in clinical_spreadsheet.xlsx. Per project policy
+(2026-06-22): FOLLOW THE THESIS; any patient not present in the thesis is
+DISCARDED. P014 (37/F, R fusiform cortical thickening) matches no thesis patient
+and is therefore EXCLUDED from the cohort.
+
+Note: P024 (thesis #11) was imaged POST-RESECTION (partial right temporal
+resection; included at neurologist request), so its perfusion asymmetry is
+confounded by the surgical cavity.
 
 Label scheme (ez):
     'L'  unilateral Left            'R'  unilateral Right
@@ -89,6 +94,7 @@ EZ_GROUND_TRUTH = {
                     "EMU Jun 2024: R mid/posterior temporal (interictal), no seizures | "
                     "Neuropsych: right temporal (working memory, visuospatial)",
     },
+    # P024 was imaged post-resection (R temporal partial resection).
     "P024": {
         "ez": "R", "thesis_id": 11, "thesis_dx": "RTLE (posterior)", "confidence": "High",
         "evidence": "POST-SURGICAL (included at neurologist request). MRI: R temporal partial "
@@ -116,7 +122,8 @@ EZ_GROUND_TRUTH = {
                     "Neuropsych: non-lateralizing (bitemporal involvement)",
     },
     # ===== ADDED 2026-06-22: thesis #15/#16/#17 (P028/P029/P030) =====
-    # Not in clinical_spreadsheet.xlsx; processed perfusion sourced from
+    # Present in clinical_spreadsheet.xlsx (sub-P028..sub-P030) and imaged in
+    # Dataset/; processed perfusion originally sourced from
     # multimodal/Aikam/.../asl_analysis/. Mapping inferred from the exact
     # sequential pattern P013->#1 ... P027->#14 (P014 excluded) -> P028=#15,
     # P029=#16, P030=#17. All ages (30/31/27) fall in the FM_20_39 band.

@@ -1,6 +1,6 @@
 # AsymmetryAnalysis
 
-**Open-source toolkit for ASL perfusion epileptogenic-zone localization and lateralization in drug-resistant focal epilepsy.**
+**Open-source toolkit for arterial spin labeling (ASL) perfusion asymmetry analysis in drug-resistant focal epilepsy.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
@@ -9,92 +9,78 @@
 ## Table of contents
 
 - [What this is](#what-this-is)
-- [Scientific background](#scientific-background)
-- [Two complementary pipelines](#two-complementary-pipelines)
+- [Main findings on the development cohort](#main-findings-on-the-development-cohort)
+- [Two analysis pipelines](#two-analysis-pipelines)
+- [Symmetric-template registration](#symmetric-template-registration)
 - [Direction-of-abnormality inference](#direction-of-abnormality-inference)
-- [Localization vs. lateralization](#localization-vs-lateralization)
+- [Mirrored cluster pairs](#mirrored-cluster-pairs)
 - [Installation](#installation)
 - [Quickstart](#quickstart)
 - [Full pipeline walkthrough](#full-pipeline-walkthrough)
+- [Validation analyses](#validation-analyses)
 - [Data layout](#data-layout)
 - [Results layout](#results-layout)
 - [Asymmetry indices (15)](#asymmetry-indices-15)
 - [Thresholding methods (13)](#thresholding-methods-13)
-- [Surgical-grade thresholds and the 37-ROI clinical scope](#surgical-grade-thresholds-and-the-37-roi-clinical-scope)
+- [Reporting tiers and the 37-region clinical scope](#reporting-tiers-and-the-37-region-clinical-scope)
 - [Interactive viewer](#interactive-viewer)
 - [Limitations](#limitations)
 - [How to cite](#how-to-cite)
 - [References](#references)
-- [Related work and notes](#related-work-and-notes)
 - [License](#license)
 
 ## What this is
 
-AsymmetryAnalysis is a clinical-research toolkit for **localizing and lateralizing the epileptogenic zone (EZ)** from arterial spin labeling (ASL) perfusion MRI in patients with drug-resistant focal epilepsy. It is intended to **complement, not replace**, EEG, structural MRI, neuropsychology, and PET in multimodal presurgical evaluation. Outputs are designed for integration into multidisciplinary-team (MDT) review, with an explicit multi-modal-concordance requirement before any prediction is treated as a surgical target.
+AsymmetryAnalysis quantifies left-right perfusion asymmetry from ASL MRI and compares it with a healthy normative cohort, to support lateralization of the epileptogenic zone (EZ) in presurgical evaluation. It is a research tool. Its output is one input to multidisciplinary-team (MDT) review and must not be used alone to choose the side of surgery.
 
-The toolkit answers two related but distinct clinical questions:
+It is the companion code for the manuscript *Normative voxel-wise arterial spin labeling asymmetry for lateralizing the epileptogenic zone in drug-resistant focal epilepsy* (in preparation). The manuscript itself is not part of this repository.
 
-1. **Localization** — *where* in the brain is perfusion abnormal in this patient relative to healthy controls? (clinically primary)
-2. **Lateralization** — *which hemisphere* contains the EZ? (an intermediate step that helps the surgeon, not a final answer)
+## Main findings on the development cohort
 
-It is open source under the MIT license and is the companion code for the manuscript *"Quantitative Assessment of Cerebral Perfusion Asymmetry Using Arterial Spin Labeling MRI"* (under review at *NeuroImage: Clinical*, 2026).
+Cohort: 17 adults (13 with a unilateral EZ hypothesis: 8 left, 5 right) and 180 healthy controls.
 
-## Scientific background
+| Analysis | Result |
+|---|---|
+| Calibration, gray matter with \|zAI\| ≥ 1.96 | 31% in standard MNI space; 12.9% after symmetric registration; 6.9% for controls (leave-one-out) |
+| Regional pipeline, best aggregation | AUC 0.60 (95% CI 0.28–0.90); 8/13 under leave-one-out, equal to always predicting left |
+| Voxel-wise primary rule, clinical tier | 7/13 agree with MDT; balanced accuracy 0.51 |
+| Best voxel-wise rule of all tested | 9/13; balanced accuracy 0.64 (direction-aware majority) |
+| Hyperperfusion-dominant patients | 3 of 13 |
 
-The EZ characteristically demonstrates **interictal hypoperfusion** due to reduced neuronal metabolism and neurovascular uncoupling. However, in some patients — particularly those with FCD-II lesions, post-ictal imaging, or recent intense seizures — the same region shows **ipsilateral hyperperfusion** instead. A naïve asymmetry analysis that assumes hypoperfusion will systematically mis-localize the hyperperfused subset.
+In this cohort, no rule lateralized better than chance once the left-sided majority is taken into account. The calibration and the direction-of-abnormality output are the parts of the method that we consider ready for wider testing.
 
-This toolkit explicitly handles both directions by referencing each hemisphere **independently** against a healthy-control normative database, classifying each surviving asymmetry as `L-hyper`, `L-hypo`, `R-hyper`, `R-hypo`, or `mixed`, and combining the direction with a per-cluster polarity rule to predict the EZ side.
+## Two analysis pipelines
 
-The core of the framework is a **voxel-wise asymmetry z-score (zAI)** computed against a per-demographic-group healthy normative database, with thirteen statistical thresholding methods, optional direction-of-abnormality inference, and an explicit **surgical-grade reporting threshold** (`|zAI|≥4`, cluster ≥100 voxels, restricted to a 37-paired-ROI clinical scope).
-
-The methodology builds on, and integrates findings from, the following recent literature:
-
-- **Han et al., 2026, *CNS Neurosci Ther.*** — PET Z-map validated against SEEG in n=120 drug-resistant focal epilepsy patients. Reports moderate sensitivity (0.62), strong specificity (0.94), NPV (0.91), with marked regional heterogeneity (frontal/parietal κ≈0.65 vs. temporal/insular κ≈0.45). Anchors the **exclusion-utility framing**: the framework is most reliable for ruling out a hemisphere, not for confirming one.
-- **Gennari et al., 2026, *Neurol Sci.* and 2025, *Epilepsia*** — head-to-head comparison of ASL voxel-based asymmetry-index analysis vs. FDG-PET in pediatric drug-resistant focal epilepsy. Validates the voxel-AI paradigm directly.
-- **Shang et al., 2021, *Sci Rep.*** — voxel-based zAI for ASL EZ lateralization in MRI-negative TLE.
-- **Boscolo Galazzo et al., 2016, *NeuroImage Clin.*** — simultaneous PET/ASL methodology, including the standard AI formula.
-- **Sierra-Marcos et al., 2017, *Brain*** — postictal hypoperfusion as a SOZ-localizing signal in ASL; supports the time-since-last-seizure framing.
-- **Ferrari et al., 2024, *Sci Rep.*** — direct evidence that 40% of FCD lesions are hyperperfused (vs. hypoperfused), correlating with EEG spike rate. Justifies the direction-inference logic.
-
-## Two complementary pipelines
-
-| | **Pipeline A — ROI** | **Pipeline B — Voxel** |
+| | **Pipeline A: regional** | **Pipeline B: voxel-wise** |
 |---|---|---|
-| **What it does** | Per-region asymmetry indices on 37 FreeSurfer ROI pairs | Per-voxel asymmetry z-score against healthy normative database |
-| **Question answered** | Which hemisphere has more aggregate asymmetry? | Where in the brain are the abnormal asymmetries, and how big are they? |
-| **Output** | Patient-level lateralization score, ROC vs. MDT | Thresholded zAI volume + cluster reports |
-| **Pros** | Interpretable, statistically parsimonious | Spatially precise, suitable for surgical planning |
-| **Cons** | Direction-blind; loses focal info | Higher dimensionality, more thresholding decisions |
-| **Status** | Complete on full 15-patient cohort | Complete on F_20_39-matched subset (5/15 patients); other groups in processing |
+| **Input** | Mean CBF in 37 homologous region pairs | Voxel-wise CBF after symmetric registration |
+| **Statistic** | 15 asymmetry indices, 9 aggregation methods | Asymmetry z-score (zAI) against age-band controls |
+| **Output** | One lateralization score per patient | Thresholded zAI maps, cluster reports, patient report |
+| **Direction** | Direction-blind | Each cluster classed hypo- or hyperperfused |
 
-The framework is *dual-pipeline by design*: ROI summaries support direct benchmarking and literature comparability; voxel maps support spatial localization. Both pipelines run independently on the same patient cohort and are cross-compared.
+## Symmetric-template registration
+
+The voxel asymmetry index compares each voxel with its mirror across the midline. This is valid only if homologous structures sit at mirror-symmetric positions, which MNI152 does not guarantee. Every subject is therefore registered (FSL flirt + fnirt) to a study-specific template built as the average of the mean control T1 and its left-right flip (`symreg/`). Without this step, about 31% of gray matter exceeds |zAI| ≥ 1.96 in every patient.
 
 ## Direction-of-abnormality inference
 
-For each surviving zAI cluster, Pipeline B computes the **per-side perfusion z-score** against the same control cohort and classifies the cluster:
+An asymmetry index cannot tell left hyperperfusion from right hypoperfusion. For each cluster, `02_compute_zai.py` compares both hemispheres with the control perfusion mean and SD:
 
 ```
-For each surviving zAI cluster:
-    Compute  z_perf_A = median over cluster ∩ side-A  of (CBF_patient − μ_CBF_controls) / σ_CBF_controls
-    Compute  z_perf_B = median over mirror voxels ∩ side-B of (same)
+z_A = median perfusion z-score over the cluster (hemisphere A)
+z_B = median perfusion z-score over its mirror (hemisphere B)
 
-    If z_perf_A ≥ +z_thr  and  |z_perf_B| < z_thr:  A-hyper   →  EZ side = A
-    If z_perf_A ≤ −z_thr  and  |z_perf_B| < z_thr:  A-hypo    →  EZ side = A  (deviating side IS EZ in both directions)
-    If z_perf_B ≥ +z_thr  and  |z_perf_A| < z_thr:  B-hyper   →  EZ side = B
-    If z_perf_B ≤ −z_thr  and  |z_perf_A| < z_thr:  B-hypo    →  EZ side = B
-    Else:                                          mixed/subtle  →  flag for manual MDT review
+|z_A| >= 2 and |z_B| < 2   -> hypo or hyper on A   -> predicted side A
+|z_B| >= 2 and |z_A| < 2   -> hypo or hyper on B   -> predicted side B
+both >= 2                  -> mixed                -> flagged for review
+neither >= 2               -> subtle               -> larger |z| side, low certainty
 ```
 
-with default `z_thr = 2`. **Key principle**: the EZ side is always the *deviating* side, regardless of whether the deviation is hyperperfusion or hypoperfusion. Direction (hyper vs hypo) is metadata about the underlying mechanism (interictal hypometabolism vs. FCD-II / post-ictal active hyperperfusion) — not a side-flipping switch. This **replaces** the previous polarity-flip rule, which implicitly assumed all asymmetries were hypoperfusion-driven and therefore mis-classified the FCD-II / post-ictal hyperperfused subset.
+The predicted side is the deviating hemisphere, whether the deviation is hypo- or hyperperfusion. The direction class is reported for every cluster so that the MDT can weigh it against seizure timing and histology.
 
-## Localization vs. lateralization
+## Mirrored cluster pairs
 
-The toolkit reports **two separate performance dimensions** — never combined into a single number:
-
-- **Lateralization performance** — left-vs-right AUC, sensitivity, specificity, accuracy. Useful for comparison with prior literature; this is the typical reporting in the field.
-- **Localization performance** — *target Dice* (overlap between surviving clusters and MDT-defined target ROI), *target hit rate* (fraction of patients with ≥1 cluster within the target), *top-cluster accuracy* (whether the largest cluster is in or adjacent to the target lobe). This is the metric that actually answers the surgical question.
-
-Critically, **the lateralization-AUC ranking and the localization-Dice ranking can disagree.** A method that produces large numbers in non-EZ regions can win on lateralization-AUC and lose on localization-Dice. We report both and recommend that downstream users prioritize localization for surgical decisions, lateralization for benchmarking.
+The zAI map is antisymmetric: zAI at a voxel equals minus zAI at its mirror. Every abnormality therefore appears as two clusters, one in each hemisphere, with opposite sign, the same direction class and the same predicted side. Counts and votes must use one member per pair (rows where `cluster_hemi == ez_side_pred` in the cluster report). Rules that assign a side from the sign of the asymmetry alone cancel out if both members are counted.
 
 ## Installation
 
@@ -104,259 +90,212 @@ cd AsymmetryAnalysis
 pip install -e .
 ```
 
-Runtime requirements (Python ≥ 3.10): NumPy, SciPy, Pandas, nibabel, matplotlib, seaborn, scikit-learn, openpyxl. See `requirements.txt` and `pyproject.toml` for pinned versions.
+Requirements: Python ≥ 3.10 with NumPy, SciPy, pandas, nibabel, matplotlib, seaborn, scikit-learn and openpyxl (see `requirements.txt`). **FSL** (flirt, fnirt) is required for the symmetric registration in `symreg/`. Optional: FSLeyes for `interactive_viewer.py`; [HCP-ASL](https://github.com/physimals/hcp-asl) to produce the CBF maps from raw data.
 
-Optional:
-- **FSLeyes** for the interactive 3D viewer (`interactive_viewer.py`).
-- **HCP-ASL** ([physimals/hcp-asl](https://github.com/physimals/hcp-asl)) for processing raw ASL data into the MNI-space CBF maps consumed by this toolkit.
-
-The toolkit assumes:
-- All subjects (patients and controls) have been processed through HCP-ASL into MNI152 0.8mm isotropic space.
-- FreeSurfer's `aparc+aseg.nii.gz` is available per subject.
-- Patient demographics (`ID`, `AGE`, `SEX`) live in `clinical_spreadsheet.xlsx`.
+Assumptions: every subject has been processed with HCP-ASL into MNI152 space at 0.8 mm, with a FreeSurfer `aparc+aseg.nii.gz`; patient demographics (ID, AGE, SEX) are in `clinical_spreadsheet.xlsx`.
 
 ## Quickstart
 
 ```bash
-# Pipeline B — voxel zAI
-python 01_build_control_normative.py --group F_20_39   # build mean/SD perfusion DB
-python 02_compute_zai.py                                # patient zAI maps (control-referenced)
-python 03_clinical_maps.py                              # gray-matter-masked clinical zAI
-python 04_publication_figures.py                        # figures 10–16 for manuscript
+# Pipeline B (voxel-wise), symmetric space
+python symreg/build_sym_template.py            # once: build the symmetric T1 template
+python symreg/make_jobs.py full | tr '\t' ' ' | \
+  xargs -P 8 -L 1 bash symreg/reg_subject.sh     # register 197 subjects (FSL flirt + fnirt)
+bash symreg/run_sym_pipeline.sh                # 01 -> 02 (per band) -> 03 -> 06 -> thresholding
+python symreg/check_full_calibration.py        # calibration check (target 5-15%)
 
-# Pipeline A — ROI MDT discrimination
-python 05_roi_discrimination.py                         # 15 indices × 4 aggregations × ROC
+# Pipeline A (regional)
+python scripts/build_comprehensive_asymmetry.py   # per-patient ROI asymmetry tables
+python 05_roi_discrimination.py                    # 15 indices x 9 aggregations, ROC
 
-# Surgeon-facing report (Pipeline B with surgical-grade thresholds + 37-ROI scope)
-python 06_clinical_interpretation.py --patient P015     # one patient
-python 06_clinical_interpretation.py --all              # cohort summary
-
-# Interactive QC (FSLeyes)
-python interactive_viewer.py
+# Patient reports and cohort concordance
+python 06_clinical_interpretation.py --patient P015
+python 06_clinical_interpretation.py --all
 ```
 
 ## Full pipeline walkthrough
 
-### Step 1 — Build control normative database (`01_build_control_normative.py`)
-Loads all controls in the specified demographic group (e.g., `F_20_39`), streams Welford's online algorithm over per-voxel perfusion to produce numerically stable mean and SD volumes, then z-scores each patient's perfusion against the control mean/SD.
+### Step 1: control normative database (`01_build_control_normative.py`)
+Accumulates per-voxel perfusion mean and SD for an age band (Welford's algorithm) and z-scores each patient's perfusion against it.
 
 ```bash
-python 01_build_control_normative.py --group F_20_39
+python 01_build_control_normative.py --sym --rebuild-group               # all bands
+python 01_build_control_normative.py --sym --group FM_20_39              # one band
 ```
 
-Outputs:
-- `results_zscore/groups/F_20_39/mean_perfusion.nii.gz`
-- `results_zscore/groups/F_20_39/sd_perfusion.nii.gz`
-- `results_zscore/groups/F_20_39/consensus_parcellation.nii.gz`
-- `results_zscore/patients/<PID>/<PID>_vs_F_20_39_zscore.nii.gz`
-
-### Step 2 — Compute control-referenced zAI (`02_compute_zai.py`)
-Computes per-voxel `AI(v) = 100 × (L − R) / ((L + R) / 2)` for every subject, builds a per-voxel control AI mean/SD database (Welford), then z-scores each patient AI map against it. **This is the canonical Pipeline B output** and now includes **per-cluster direction-of-abnormality inference** (new direction columns: `cluster_hemi`, `z_perf_cluster_side`, `z_perf_mirror_side`, `direction_class`, `ez_side_pred`).
+### Step 2: asymmetry z-score (`02_compute_zai.py`)
+Computes `AI(v) = 100 (L − R) / ((L + R)/2)` per subject, builds the control AI mean and SD (with mirror pooling and a 5% SD floor), and z-scores each patient. Each run processes only the patients in the given band, so run it once per band.
 
 ```bash
-python 02_compute_zai.py                                # all matched patients
-python 02_compute_zai.py --patient P013                 # single patient
-python 02_compute_zai.py --threshold 3.0 --min-cluster 50
+for b in FM_20_39 FM_40_59 FM_60_79; do
+  python 02_compute_zai.py --sym --rebuild --group $b
+done
 ```
 
-Outputs (per patient):
-- `results_zscore/asymmetry/patients/<PID>/<PID>_asymmetry_zscore.nii.gz` — zAI map
-- `results_zscore/asymmetry/patients/<PID>/<PID>_asymmetry_left_dominant.nii.gz`, `_right_dominant.nii.gz`, `_significant.nii.gz`
-- `results_zscore/asymmetry/patients/<PID>/<PID>_asymmetry_cluster_report.csv` — with direction-inference columns
-- `results_zscore/asymmetry/patients/<PID>/<PID>_asymmetry_summary.json`
+The cluster report includes `cluster_hemi`, `z_perf_cluster_side`, `z_perf_mirror_side`, `direction_class` and `ez_side_pred`.
 
-### Step 3 — Clinical-grade gray-matter zAI (`03_clinical_maps.py`)
-Masks zAI to gray matter, applies stricter thresholds (`|zAI| ≥ 3`, cluster ≥ 50 voxels), produces lateralized maps for surgical review.
+### Step 3: gray-matter clinical maps (`03_clinical_maps.py`)
+Masks zAI to gray matter within the 37-region clinical scope and writes lateralized maps.
 
 ```bash
-python 03_clinical_maps.py
+python 03_clinical_maps.py --sym          # add --no-clinical-mask to keep all gray matter
 ```
 
-### Step 4 — Publication figures (`04_publication_figures.py`)
-Generates figures 10–16: zAI panels, AI distributions, cluster overlays. PNG, dpi=300.
+### Step 4: figures (`04_publication_figures.py`)
+Exploratory figures 10–16 (`python 04_publication_figures.py --sym`).
 
-### Step 5 — ROI MDT discrimination (`05_roi_discrimination.py`)
-Pipeline A. Computes 15 asymmetry indices × 4 aggregation strategies on 37 ROI pairs, runs ROC + LOOCV against the MDT ground truth from `ez_ground_truth.py`.
+### Step 5: regional discrimination (`05_roi_discrimination.py`)
+Reads `results_analysis/<PID>/<PID>_comprehensive_asymmetry_analysis.csv` and evaluates 9 aggregation methods against the MDT labels in `ez_ground_truth.py` (13 unilateral patients). Bilateral and unclear cases are scored by asymmetry magnitude, not forced onto a side.
 
-```bash
-python 05_roi_discrimination.py
-```
-
-Outputs in `ez_analysis_mdt/` — performance tables, per-patient prediction CSV, ROC plots.
-
-### Step 6 — Surgeon-facing clinical interpretation (`06_clinical_interpretation.py`)
-Default reporting tool. Applies surgical-grade thresholds (`|zAI| ≥ 4`, cluster ≥ 100 voxels), restricts to the 37-paired-ROI clinical scope, **uses direction-of-abnormality inference** for the side prediction (replacing the older polarity-flip rule, with a graceful fallback for legacy CSVs), and emits per-patient text + JSON reports plus a cohort concordance CSV.
+### Step 6: patient report (`06_clinical_interpretation.py`)
+Applies a reporting tier (default |zAI| ≥ 4, ≥ 100 voxels), restricts clusters to the 37-region scope, assigns sides with the direction rule, and writes a text and JSON report per patient plus `results_zscore/clinical/cohort_concordance.csv`.
 
 ```bash
-python 06_clinical_interpretation.py --patient P015
 python 06_clinical_interpretation.py --all
-python 06_clinical_interpretation.py --peak-threshold 5 --size-threshold 200   # Bartolomei tier
+python 06_clinical_interpretation.py --all --peak-threshold 5 --size-threshold 200
 ```
 
-Outputs:
-- `results_zscore/clinical/<PID>/<PID>_surgeon_report.txt`
-- `results_zscore/clinical/<PID>/<PID>_surgeon_report.json`
-- `results_zscore/clinical/cohort_concordance.csv`
+## Validation analyses
 
-### Diagnostic / methodology aids
-- `analyze_zai_distributions.py` — AI distribution histograms for QC.
+| Script | Purpose |
+|---|---|
+| `scripts/clinical_stratified_analysis.py` | Decision rule × spatial scope × threshold tier; balanced accuracy; clinical strata; agreement between pipelines |
+| `scripts/regional_loocv.py` | Leave-one-out accuracy of the regional scores |
+| `scripts/aggregation_separability.py` | Paired bootstrap of AUC differences between aggregation methods |
+| `scripts/per_index_discrimination.py` | ROC of each of the 15 indices |
+| `scripts/rerun_thresholding_methods.py` | Coverage and cluster counts of the 13 thresholding methods |
+| `symreg/check_full_calibration.py` | Gray-matter fraction with \|zAI\| ≥ 1.96 per patient |
+
+Always report balanced accuracy and the majority-class baseline alongside the number of correctly lateralized patients.
 
 ## Data layout
 
 ```
 AsymmetryAnalysis/
-├── Dataset/                    # 15 patients (P013–P027)
+├── Dataset/                    # 17 patients (P013–P030, P014 excluded)
 │   └── P013/
 │       ├── aparc+aseg.nii.gz
 │       ├── T1w_acpc_dc_restore.nii.gz
-│       └── P013_perfusion_calib_resampled_to_T1w.nii.gz   # MNI space despite filename
-├── DatasetControls/            # Healthy controls organized by age/sex
-│   ├── 20_29F/
-│   │   └── <ctrl_id>/
-│   │       ├── *_MNISpace_perfusion_calib_upsampled.nii.gz
-│   │       └── aparc+aseg.nii.gz
-│   ├── 30_39F/...
-│   └── ...
+│       └── P013_perfusion_calib_resampled_to_T1w.nii.gz   # MNI space despite the name
+├── DatasetControls/            # 3 sex-pooled age bands, n = 60 each (HCP Aging/Development)
+│   ├── FM_20_39/<ctrl_id>/{*_MNISpace_perfusion_calib_upsampled.nii.gz, aparc+aseg.nii.gz}
+│   ├── FM_40_59/...
+│   └── FM_60_79/...
+├── symreg/                     # symmetric template, registration scripts, registered volumes
 ├── clinical_spreadsheet.xlsx   # ID, AGE, SEX
-└── ez_ground_truth.py          # MDT-reviewed labels
+└── ez_ground_truth.py          # MDT labels (L, R, B, U) and certainty grades
 ```
 
-All volumes share MNI152 geometry (227 × 272 × 227 voxels, 0.8 mm isotropic) — no registration needed at analysis time. Patient and control data are kept private and excluded from the public repository (see `.gitignore`).
+Patient and control data are private and excluded from the repository (see `.gitignore`).
 
 ## Results layout
 
 ```
 results_zscore/
-├── groups/F_20_39/             # Group-level normative DB
-│   ├── mean_perfusion.nii.gz
-│   ├── sd_perfusion.nii.gz
-│   └── consensus_parcellation.nii.gz
-├── patients/<PID>/             # Patient-level zscore (perfusion)
-│   └── <PID>_vs_F_20_39_zscore.nii.gz
+├── groups/FM_<band>/           # perfusion mean/SD, consensus parcellation
+├── patients/<PID>/             # perfusion z-score
 ├── asymmetry/
-│   ├── groups/F_20_39/         # AI normative DB
-│   │   ├── mean_asymmetry.nii.gz
-│   │   └── sd_asymmetry.nii.gz
-│   └── patients/<PID>/         # zAI maps + cluster reports (with direction columns)
-└── clinical/<PID>/             # Gray-matter, surgical-grade
-    ├── <PID>_clinical_*.nii.gz
-    ├── <PID>_surgeon_report.txt
-    └── <PID>_surgeon_report.json
-
-ez_analysis_mdt/                # Pipeline A outputs (ROC, LOOCV, etc.)
-visual_analysis/                # Publication figures
+│   ├── groups/FM_<band>/       # AI mean/SD, brain mask
+│   ├── patients/<PID>/         # zAI map, cluster report with direction columns
+│   └── summary/                # thresholding comparison
+└── clinical/<PID>/             # gray-matter maps and patient reports
+results_analysis/               # per-patient regional asymmetry tables (Pipeline A input)
+ez_analysis_mdt/                # regional ROC, LOOCV, stratified voxel-wise analyses
+visual_analysis/                # figures and per-patient overlays
 ```
 
 ## Asymmetry indices (15)
 
-All formulas literature-cited; canonical implementations in `src/calculator.py`.
+Implemented in `src/calculator.py`, each with a primary statistical source.
 
 | Category | Indices |
 |---|---|
-| **Ratio-based** | Laterality Index (LI), Absolute Asymmetry Index (AAI), Percent Difference, Log Ratio, Coefficient of Asymmetry |
-| **Baselines** | Simple Difference, Ratio |
-| **Standardized effect sizes** | Cohen's *d*, Hedges' *g*, Glass's Δ |
-| **Distribution-based** | Z-score (LI), Robust Z-score (LI) |
-| **Advanced** | CV Ratio, Hyperperfusion Ratio, Normalized Difference |
+| Ratio-based | Laterality index (LI), absolute asymmetry index, percent difference, log ratio, coefficient of asymmetry |
+| Baselines | Simple difference, ratio |
+| Effect sizes | Cohen's *d*, Hedges' *g*, Glass's Δ |
+| Within-patient distribution | z-score of LI, robust z-score of LI |
+| Other | Coefficient-of-variation ratio, hyperperfusion ratio, normalized difference |
+
+Several indices are monotone transforms of one another; seven signed indices give identical AUC.
 
 ## Thresholding methods (13)
 
-Implemented in `src/thresholding.py`. The **default reporting method is M11 (Quality + TFCE)** — a bilateral quality-mask pre-filter combined with Threshold-Free Cluster Enhancement.
+Implemented in `src/thresholding.py`. The default is M11 (quality mask + TFCE). The comparison reports coverage and cluster counts only; it is not an accuracy ranking, because the MDT label gives a side and not a voxel-wise extent.
 
 | ID | Method | Notes |
 |---|---|---|
-| M1 | Fixed Z + cluster | Simple, default `|z| ≥ 1.64`, cluster ≥ 50 |
-| M2 | Quality + percentile | Pre-mask + 90th-percentile cutoff |
-| M3 | Benjamini–Hochberg FDR | `q = 0.05` |
-| M4 | Bonferroni | `α = 0.05`, very conservative |
-| M5 | TFCE | Smith & Nichols 2009 |
-| M6 | Gaussian Random Fields | Worsley 1996 |
-| M7 | Permutation (1000 sign-flips) | Maximal-statistic null |
-| M8 | Gaussian Mixture Model | Decomposes into background/signal |
-| M9 | Otsu | Bi-modal data-driven cutoff |
-| M10 | Random baseline | Null-method reference |
-| M11 | **Quality + TFCE** | Default; recommended |
+| M1 | Fixed z + cluster | \|z\| ≥ 1.64, ≥ 50 voxels |
+| M2 | Quality + percentile | 90th percentile within the bilateral quality mask |
+| M3 | Benjamini–Hochberg FDR | q = 0.05 |
+| M4 | Bonferroni | α = 0.05 |
+| M5 | TFCE | Smith and Nichols 2009 |
+| M6 | Gaussian random field | Worsley et al. 1996 |
+| M7 | Permutation | 200 sign-flips, maximal statistic |
+| M8 | Gaussian mixture model | |
+| M9 | Otsu | |
+| M10 | Random baseline | 3% of voxels, null reference |
+| M11 | **Quality + TFCE** | Default |
 | M12 | Quality + GMM | |
 | M13 | Quality + Otsu | |
 
-## Surgical-grade thresholds and the 37-ROI clinical scope
+## Reporting tiers and the 37-region clinical scope
 
-Research-grade thresholds (M1–M13 above) are appropriate for whole-brain exploratory analysis. **Surgical decisions require a stricter standard.** The toolkit therefore exposes three reporting tiers:
-
-| Tier | `|zAI|` threshold | Cluster size | Source |
+| Tier | \|zAI\| | Cluster size | Volume (native 2.5-mm ASL voxels) |
 |---|---|---|---|
-| Research / sensitivity | ≥ 3 | ≥ 50 voxels | Shang 2021 |
-| **Standard clinical view (default)** | **≥ 4** | **≥ 100 voxels** | Boscolo Galazzo 2016 |
-| Surgical confidence | ≥ 5 | ≥ 200 voxels | Bartolomei 2008 |
-| Concordance-required | ≥ 4 + within 2 cm of MRI lesion | + EEG/neuropsych | Gennari 2025 |
+| Research | ≥ 3 | ≥ 50 voxels | 26 mm³ (1.7) |
+| Clinical (default) | ≥ 4 | ≥ 100 voxels | 51 mm³ (3.3) |
+| Surgical | ≥ 5 | ≥ 200 voxels | 102 mm³ (6.5) |
+| Native resolution | ≥ 4 | ≥ 610 voxels | 312 mm³ (20) |
 
-The clinical-scope mask is **37 paired ROIs**: 3 subcortical pairs (thalamus, hippocampus, amygdala) + 34 Desikan–Killiany cortical pairs. Excluded: caudate, putamen, pallidum (non-typical resection targets), paracentral lobule, isthmus cingulate, occipital pole. Voxel-level zAI maps are computed and stored *unmasked* — the 37-ROI mask is applied at display and decision time only.
+The clinical tier matches the z > 4 operating point reported for symmetrized FDG-PET asymmetry maps (Aslam et al. 2022). The clinical scope is 37 region pairs: thalamus, hippocampus, amygdala and the 34 Desikan–Killiany cortical regions. Caudate, putamen and pallidum are excluded. zAI maps are stored unmasked; the scope is applied when reports are generated.
 
 ## Interactive viewer
 
-`python interactive_viewer.py` opens a menu-driven FSLeyes-based interface with options 1–20:
-
-- **Option 10** — top-N largest clusters
-- **Option 11** — 37-ROI clinical-scope mask preview
-- **Option 15** — clinical report (surgeon-facing, surgical-grade thresholds)
+`python interactive_viewer.py` opens a menu-driven FSLeyes interface (options 0–16). It currently overlays maps on the original-space anatomy; use the symmetric template in `symreg/templates/` as the underlay when viewing symmetric-space zAI maps.
 
 ## Limitations
 
-- Single-site, single-scanner (3T Siemens MAGNETOM Prisma), single-pipeline (HCP-ASL) cohort. External validation on independent public ASL data (OpenNeuro, ASL-BIDS) is the highest short-term priority.
-- 15 patients is small relative to recent precedent (Han 2026 used n=120 for SEEG-validated PET Z-maps). Results are best interpreted as a methodological demonstration, not a definitive performance estimate.
-- Pipeline A asymmetry indices are *direction-blind*; only Pipeline B with the direction-inference refinement explicitly distinguishes hypoperfusion from hyperperfusion.
-- Lateralization-AUC and localization-Dice rankings can disagree; clinical decisions should prioritize localization, not lateralization-AUC ordering.
-- MDT ground truth is the current standard but is not an outcome-validated gold standard; surgical-outcome (Engel-class) follow-up is in progress.
-- No public-dataset external validation has yet been performed.
-- Surface-based methods miss mesial structures; volumetric voxel-wise zAI (Pipeline B) helps but is not immune to partial-volume effects in the hippocampus and amygdala.
+- 17 patients (13 unilateral). Every AUC interval includes chance.
+- The reference is the MDT hypothesis; only 5 patients have stereo-EEG or histopathological support, and follow-up is short.
+- Controls are HCP Aging/Development data acquired at other sites with the same protocol. The 20–39 band has no controls aged 22–35 (30 aged ≤ 21, 30 aged ≥ 36).
+- One patient (P024) was imaged after a temporal resection.
+- The interval from the last seizure to imaging was not recorded, although it governs the direction of perfusion change.
+- The symmetric template is study specific.
+- No public ASL dataset with EZ ground truth is available for external validation.
 
 ## How to cite
 
 ```bibtex
-@article{jalali2026asl_localization,
-  title  = {Quantitative Assessment of Cerebral Perfusion Asymmetry Using
-            Arterial Spin Labeling MRI: An Open-Source Framework with
-            Direction-of-Abnormality Inference for Epileptogenic Zone
-            Localization and Lateralization},
-  author = {Jalali, Amin and others},
-  journal= {(under review at NeuroImage: Clinical)},
-  year   = {2026},
-  url    = {https://github.com/aminjalali-research/AsymmetryAnalysis}
+@unpublished{jalali2026asl,
+  title   = {Normative voxel-wise arterial spin labeling asymmetry for lateralizing
+             the epileptogenic zone in drug-resistant focal epilepsy},
+  author  = {Jalali, Amin and Rai, Aikam and Suppa Modrusan, Matthew and Mullett, Ada and
+             Levy, Ron and Boisse Lomax, Lysa and Shukla, Garima and Winston, Gavin P.},
+  note    = {Manuscript in preparation},
+  year    = {2026},
+  url     = {https://github.com/aminjalali-research/AsymmetryAnalysis}
 }
 ```
 
 ## References
 
-Key references for the methodology:
-
-1. **Han et al., 2026** — Clinical Utility of Z-Score Distribution Mapping in EZ Localizations, *CNS Neurosci Ther*, doi: 10.1002/cns.70876.
-2. **Gennari et al., 2026** — Head-to-head ASL vs FDG-PET in pediatric epilepsy, *Neurol Sci*.
-3. **Gennari et al., 2025** — ASL predicts surgical outcome, *Epilepsia*, doi: 10.1111/epi.18375.
-4. **Shang et al., 2021** — voxel-based zAI, *Sci Rep*, PMC8149682.
-5. **Boscolo Galazzo et al., 2016** — simultaneous PET/ASL, *NeuroImage Clin*, PMC4872676.
-6. **Sierra-Marcos et al., 2017** — postictal hypoperfusion ASL, *Brain*, doi: 10.1093/brain/awx241.
-7. **Ferrari et al., 2024** — FCD hyperperfusion in pediatric ASL, *Sci Rep*, doi: 10.1038/s41598-024-58352-9.
-8. **Smith & Nichols, 2009** — TFCE, *NeuroImage*, doi: 10.1016/j.neuroimage.2008.03.061.
-9. **Bartolomei et al., 2008** — Epileptogenicity Index, *Brain*, doi: 10.1093/brain/awn111.
-10. **Alsop et al., 2015** — ISMRM ASL recommended implementation, *Magn Reson Med*.
-
-## Related work and notes
-
-External pipelines and references explored during development:
-
-- **HCP-ASL** ([physimals/hcp-asl](https://github.com/physimals/hcp-asl)) — the official Human Connectome Project ASL processing pipeline by the Oxford Physimals group; this is what we use to produce the MNI-space CBF maps consumed by Pipeline A and Pipeline B. Built on BASIL/`oxford_asl`.
-- **ASLPrep** ([PennLINC/aslprep](https://github.com/PennLINC/aslprep)) — alternative BIDS-app ASL preprocessing pipeline; an option for users who prefer a fMRIPrep-style workflow over HCP-ASL.
-- **NeuroSTORM** ([CUHK-AIM-Group/NeuroSTORM](https://github.com/CUHK-AIM-Group/NeuroSTORM)) — relevant for symmetrical voxel-based bilateral-pairing templates.
-- **ASL-BIDS** ([standard](https://www.nature.com/articles/s41597-022-01615-9)) — the BIDS extension for ASL; required for portability of the framework to public datasets such as OpenNeuro `ds004199` (Presurgical MRI Epilepsy) and `ds005602` (IDEAS — Imaging Database for Epilepsy And Surgery).
-
-A note on processing-template symmetry: the HCP-ASL pipeline transforms data to MNI152 standard space at 0.8 mm isotropic for final outputs, but uses MSMAll cortical-surface registration and preserves subject-specific anatomy on the way there — i.e. the templates used are **not** explicitly symmetrical. This is appropriate for asymmetry analysis: a symmetric template would erase precisely the bilateral-anatomy information that the asymmetry index relies on.
+1. Aslam S, et al. Asymmetry index in anatomically symmetrized FDG-PET for improved epileptogenic focus detection in pharmacoresistant epilepsy. *J Neurosurg* 2022;138:828–836. doi:10.3171/2022.6.JNS22717
+2. Boscolo Galazzo I, et al. Cerebral metabolism and perfusion in MR-negative individuals with refractory focal epilepsy assessed by simultaneous acquisition of 18F-FDG PET and arterial spin labeling. *NeuroImage Clin* 2016;11:648–657. doi:10.1016/j.nicl.2016.04.005
+3. Didelot A, et al. Voxel-based analysis of asymmetry index maps increases the specificity of 18F-MPPF PET abnormalities for localizing the epileptogenic zone in temporal lobe epilepsies. *J Nucl Med* 2010;51:1732–1739. doi:10.2967/jnumed.109.070938
+4. Gaxiola-Valdez I, et al. Seizure onset zone localization using postictal hypoperfusion detected by arterial spin labelling MRI. *Brain* 2017;140:2895–2911. doi:10.1093/brain/awx241
+5. Gennari AG, et al. Lesion volume and spike frequency on EEG impact perfusion values in focal cortical dysplasia: a pediatric arterial spin labeling study. *Sci Rep* 2024;14:7601. doi:10.1038/s41598-024-58352-9
+6. Han J, et al. Clinical utility of Z-score distribution mapping in epileptogenic zone localizations. *CNS Neurosci Ther* 2026;32:e70876. doi:10.1002/cns.70876
+7. Kirk TF, et al. Arterial spin labelling perfusion MRI analysis for the Human Connectome Project Lifespan Ageing and Development studies. *Imaging Neurosci* 2025;3. doi:10.1162/imag_a_00444
+8. Mattioli P, et al. Head to head comparison between arterial spin labelling MRI and [18F]FDG-PET in presurgical evaluation of epilepsy in children: the role of voxel-based asymmetry index analysis. *Neurol Sci* 2026. doi:10.1007/s10072-026-08891-y
+9. Smith SM, Nichols TE. Threshold-free cluster enhancement. *NeuroImage* 2009;44:83–98. doi:10.1016/j.neuroimage.2008.03.061
+10. Alsop DC, et al. Recommended implementation of arterial spin-labeled perfusion MRI for clinical applications. *Magn Reson Med* 2015;73:102–116. doi:10.1002/mrm.25197
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT, see [`LICENSE`](LICENSE).
 
 ---
 
-**Funding.** This work was supported by the SEAMO (Southeastern Ontario Academic Medical Organization) Innovation Fund.
+**Funding.** Southeastern Ontario Academic Medical Organization (SEAMO) Innovation Fund (SEA-24-011).
 
-**Acknowledgments.** We thank the multidisciplinary epilepsy team for clinical data review, the patients for their participation, and the Physimals group at the University of Oxford for developing and maintaining the open-source [HCP-ASL](https://github.com/physimals/hcp-asl) processing pipeline used in this work.
+**Acknowledgments.** We thank the patients, the epilepsy multidisciplinary team of Kingston Health Sciences Centre, and the Physimals group for the open-source [HCP-ASL](https://github.com/physimals/hcp-asl) pipeline.

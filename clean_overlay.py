@@ -317,6 +317,11 @@ def load_direction_summary(patient_id: str):
         return None, None, csv_path
     if "direction_class" not in df.columns:
         return None, None, csv_path
+    # The zAI map is antisymmetric: keep one member per mirrored pair
+    # (the member lying in its assigned hemisphere).
+    if {"cluster_hemi", "ez_side_pred"}.issubset(df.columns):
+        ez = df["ez_side_pred"].fillna("").astype(str)
+        df = df[ez.isin(["L", "R"]) & (df["cluster_hemi"] == ez)]
     # Weight direction by cluster size.
     sizes = df.get("size_voxels", pd.Series([1] * len(df)))
     counts = {}
@@ -332,14 +337,15 @@ def load_direction_summary(patient_id: str):
     summary = (f"clusters hyper={n_hyper} hypo={n_hypo} "
                f"mixed={(df['direction_class'] == 'mixed').sum()} "
                f"subtle={(df['direction_class'] == 'subtle').sum()}")
-    # Side prediction (size-weighted majority of ez_side_pred).
-    if "ez_side_pred" in df.columns:
-        side_w = {}
-        for side, sz in zip(df["ez_side_pred"], sizes):
-            side_w[side] = side_w.get(side, 0) + int(sz)
-        if side_w:
-            ez_side = max(side_w, key=side_w.get)
-            summary += f" | EZ side pred={ez_side}"
+    # Side prediction: use the patient report's call so the figure and the
+    # report always agree (clinical tier, 37-region scope, primary rule).
+    report = (ASYMMETRY_DIR.parent / "clinical" / patient_id /
+              f"{patient_id}_surgeon_report.json")
+    if report.exists():
+        import json
+        rep_d = json.loads(report.read_text())
+        summary += (f" | report call={rep_d.get('algo_prediction')} "
+                    f"({rep_d.get('algo_confidence')})")
     return summary, dominant, csv_path
 
 
@@ -393,7 +399,7 @@ def render_overlay_montage(patient_id, cleaned, raw_thresholded, anatomy,
         amax = float(np.abs(cleaned).max())
         display_max = max(threshold + 1.0, min(amax, 10.0)) if amax > 0 else threshold + 1.0
     norm = TwoSlopeNorm(vmin=-display_max, vcenter=0.0, vmax=display_max)
-    # Direction-aware diverging cmap: + (left-dominant) red/warm, - cool/blue.
+    # Diverging cmap: + (voxel higher than its mirror) red, - (lower) blue.
     cmap = plt.get_cmap("RdBu_r").copy()
 
     peak, (kmin, kmax) = _peak_cluster_centroid(cleaned)
@@ -458,10 +464,10 @@ def render_overlay_montage(patient_id, cleaned, raw_thresholded, anatomy,
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=ax_cb, fraction=0.5, pad=0.02)
-    cbar.set_label("zAI  (+ left-dominant / - right-dominant)", fontsize=9)
+    cbar.set_label("zAI  (+ higher than mirror / - lower than mirror)", fontsize=9)
     legend_handles = [
-        Patch(facecolor=cmap(0.92), label="+ zAI  (L>R asymmetry)"),
-        Patch(facecolor=cmap(0.08), label="- zAI  (R>L asymmetry)"),
+        Patch(facecolor=cmap(0.92), label="+ zAI  (voxel > mirror)"),
+        Patch(facecolor=cmap(0.08), label="- zAI  (voxel < mirror)"),
         Patch(facecolor="none", edgecolor="lime", label="37-ROI clinical mask"),
     ]
     ax_cb.legend(handles=legend_handles, loc="lower center", fontsize=8,
@@ -539,14 +545,9 @@ def load_stat_map(patient_id, space, group):
         path = (RESULTS_DIR / "patients" / patient_id /
                 f"{patient_id}_vs_{group}_zscore.nii.gz")
     if not path.exists():
-        # Fallback: any available asymmetry_zscore map.
-        alt = (ASYMMETRY_DIR / "patients" / patient_id /
-               f"{patient_id}_asymmetry_zscore.nii.gz")
-        if alt.exists():
-            print(f"  [fallback] {path.name} missing; using {alt.name}")
-            path = alt
-        else:
-            return None, None, None
+        # Never substitute a different statistic under the requested label.
+        print(f"  [skip] {path.name} missing for space={space}")
+        return None, None, None
     img = nib.load(str(path))
     return img.get_fdata(dtype=np.float32), img.affine, path
 

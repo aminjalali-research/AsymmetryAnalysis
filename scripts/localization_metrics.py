@@ -2,8 +2,9 @@
 """Compute Pipeline-B localization performance against MDT-defined target lobes.
 
 For each unilateral-EZ patient (per ez_ground_truth.get_unilateral_patients;
-2026-06 cohort = 13 patients, P014 excluded, P028/P029/P030 added), load the
-clinical cluster report and compute:
+13 patients in the n=17 cohort), load the 02_compute_zai.py cluster report
+(results_zscore/asymmetry/patients/<PID>/<PID>_asymmetry_cluster_report.csv)
+and compute, over ONE member per mirrored pair (see below):
   - N_clusters (total surviving)
   - N_target_clusters (located in target temporal lobe)
   - target_hit_rate (fraction of clusters in target lobe)
@@ -11,9 +12,17 @@ clinical cluster report and compute:
   - top_cluster_in_target (1 if largest cluster is in target lobe, else 0)
   - top_cluster_region (primary_region of the largest cluster)
 
-Target lobes (MDT-defined):
-  P013, P015, P020, P026 -> Left temporal
-  P014                   -> Right temporal
+Mirrored-pair handling: the voxel zAI map is exactly antisymmetric
+(zAI(v) = -zAI(mirror v)), so every abnormality appears as two mirror clusters,
+one per hemisphere. Each pair is counted once by keeping the member whose
+cluster_hemi equals ez_side_pred (the side the direction-of-abnormality
+inference attributes the abnormality to). Hemisphere-specific region labels
+(L-/R-) are therefore meaningful: a hit means the abnormality was attributed to
+the target lobe on the target side.
+
+Target lobes: the MDT-defined EZ side's temporal lobe (L or R), for every
+unilateral patient except P025 (parietal; excluded because the metric is
+temporal-lobe-scoped).
 
 Output: ez_analysis_mdt/localization_performance.csv
 """
@@ -60,21 +69,22 @@ TARGETS = _targets()
 def main() -> None:
     rows: list[dict] = []
     for pid, (target_name, target_regions) in TARGETS.items():
-        # New 03_clinical_maps.py output naming (post-SD-fix); fall back to
-        # legacy filename if the new file is missing.
-        new_path = ROOT / "results_zscore" / "clinical" / pid / f"{pid}_clinical_zai_cluster_report.csv"
-        old_path = ROOT / "results_zscore" / "clinical" / pid / f"{pid}_clinical_cluster_report.csv"
-        csv_path = new_path if new_path.exists() else old_path
+        csv_path = (ROOT / "results_zscore" / "asymmetry" / "patients" / pid
+                    / f"{pid}_asymmetry_cluster_report.csv")
         if not csv_path.exists():
-            print(f"  [skip] {pid}: clinical cluster report not yet present "
-                  f"(PENDING zAI rebuild)")
+            print(f"  [skip] {pid}: {csv_path.name} not present (run 02_compute_zai.py)")
             continue
         df = pd.read_csv(csv_path)
-        if df.empty:
-            print(f"  [skip] {pid}: clinical cluster report empty")
+        if not {"cluster_hemi", "ez_side_pred"}.issubset(df.columns):
+            print(f"  [skip] {pid}: cluster report lacks cluster_hemi/ez_side_pred "
+                  f"(legacy schema; rerun 02_compute_zai.py)")
             continue
-        # Column name compatibility: new schema uses peak_zai/mean_zai,
-        # legacy schema uses peak_z/mean_z.
+        n_raw = len(df)
+        # One member per mirrored pair: keep the cluster on the attributed side.
+        df = df[df["cluster_hemi"].astype(str) == df["ez_side_pred"].astype(str)]
+        if df.empty:
+            print(f"  [skip] {pid}: no clusters after one-per-pair filter (raw {n_raw})")
+            continue
         peak_col = "peak_zai" if "peak_zai" in df.columns else "peak_z"
         n_total = len(df)
         in_target = df["primary_region"].isin(target_regions)
@@ -90,6 +100,7 @@ def main() -> None:
             {
                 "patient": pid,
                 "target_lobe": target_name,
+                "n_clusters_raw": n_raw,
                 "n_clusters": n_total,
                 "n_target_clusters": n_in_target,
                 "target_hit_rate": round(n_in_target / n_total, 3) if n_total else float("nan"),
@@ -105,8 +116,7 @@ def main() -> None:
 
     df = pd.DataFrame(rows)
     if df.empty:
-        print("No clinical cluster reports available yet — "
-              "rerun after the zAI rebuild + 03_clinical_maps.py.")
+        print("No zAI cluster reports available - run 02_compute_zai.py first.")
         return
     out = ROOT / "ez_analysis_mdt" / "localization_performance.csv"
     df.to_csv(out, index=False)
