@@ -141,7 +141,7 @@ Minor:
 
 ## 7. As-implemented method on Chalfont (pre-specified primary endpoint)
 
-Stages 0–4 completed 2026-10-20 12:30 (`external_chalfont/results_zscore/clinical/cohort_concordance.csv`); the pseudo-control stage is being rerun at 2 jobs after a cgroup OOM kill.
+All stages completed 2026-10-20 13:00 (`external_chalfont/results_zscore/lateralization/eval_*.csv`).
 
 | Quantity | Value |
 |---|---|
@@ -149,7 +149,9 @@ Stages 0–4 completed 2026-10-20 12:30 (`external_chalfont/results_zscore/clini
 | Primary rule, clinical tier, 93 unilateral (43 L / 50 R) | 58/93 agree (62 %), balanced accuracy 0.63, majority 0.54, binomial p = 0.06 |
 | Calls | 48 L, 40 R, 5 bilateral; strong 16/20, moderate 29/46, weak 13/22 |
 | Strata | lesional 32/46 (0.69); MRI-negative 26/47 (0.55); temporal 33/49 (0.67); frontal 10/21 (0.47); resected 8/12 (0.67) |
-| Control false-positive call rate | pending (pseudo-controls) |
+| Control false-positive call rate (LOO, clinical tier) | any call 63/66 (95 %); strong or moderate 37/66 (56 %, CI 44–67 %); strong 6/66 (9 %); specificity of strong/moderate 0.44 |
+| Secondary endpoint 1 (in-house best rule, direction-aware majority) | 50/93 (0.54): did not replicate |
+| Volume index AUC | 0.55 (0.42–0.67) |
 
 **Reading.** On same-scanner data with n = 93 the as-implemented rule shows a weak signal (0.63) and the enhanced regional statistic a slightly stronger one (0.65) with far better precision when calibrated (12/13 vs strong calls 16/20). The in-house negative result was therefore mostly the sample and the off-site controls; the method's defects (Sections 3.1–3.3) cap what any voxel-wise cluster rule can deliver and explain why its calls cannot be trusted individually.
 

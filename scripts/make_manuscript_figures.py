@@ -344,9 +344,104 @@ def fig4_enhanced():
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------
+def fig5_external_cohort():
+    """Fig. 5: the external (Chalfont) cohort and pipeline, in the style of Fig. 1."""
+    plt.rcParams.update({"font.family": ["Liberation Sans", "DejaVu Sans"],
+                         "mathtext.fontset": "custom", "mathtext.rm": "Liberation Sans",
+                         "mathtext.it": "Liberation Sans:italic", "mathtext.bf": "Liberation Sans:bold"})
+    fig = plt.figure(figsize=(7.2, 5.9))
+    ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, 100); ax.set_ylim(0, 100); ax.axis("off")
+    EC, INK, MUTED = "#4a4a4a", "#1f1f1f", "#555555"
+
+    def box(x, y, w, h, title, lines, fc, hc, fs=6.8, tfs=7.6, align="left", pad=1.5):
+        ax.add_patch(mpatches.FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0,rounding_size=1.2", fc=fc, ec=EC, lw=0.8, zorder=2))
+        top = y + h
+        if title:
+            th = 5.0
+            ax.add_patch(mpatches.FancyBboxPatch((x, y + h - th), w, th, boxstyle="round,pad=0,rounding_size=1.2", fc=hc, ec="none", zorder=3))
+            ax.add_patch(mpatches.Rectangle((x, y + h - th), w, th / 2, fc=hc, ec="none", zorder=3))
+            ax.text(x + pad, y + h - th / 2, title, ha="left", va="center", fontsize=tfs, fontweight="bold", color=INK, zorder=4)
+            top = y + h - th
+        body = "\n".join(lines)
+        if align == "left":
+            ax.text(x + pad, (top + y) / 2, body, ha="left", va="center", fontsize=fs, color=INK, linespacing=1.4, zorder=4)
+        else:
+            ax.text(x + w / 2, (top + y) / 2, body, ha="center", va="center", fontsize=fs, color=INK, linespacing=1.4, zorder=4)
+
+    def arrow(x0, y0, x1, y1):
+        ax.annotate("", xy=(x1, y1), xytext=(x0, y0), zorder=1,
+                    arrowprops=dict(arrowstyle="-|>", lw=0.9, color=EC, shrinkA=0, shrinkB=0, mutation_scale=8))
+
+    def line(x0, y0, x1, y1):
+        ax.plot([x0, x1], [y0, y1], color=EC, lw=0.9, zorder=1, solid_capstyle="round")
+
+    BLUE, BLUE_H = "#e4edf7", "#c6d8ec"; AMBER, AMBER_H = "#fbf1dc", "#f1dcad"
+    TEAL, TEAL_H = "#e1f0ec", "#b9dcd2"; GREEN, GREEN_H = "#e8f1df", "#c7ddb4"
+    ROSE, ROSE_H = "#f9e6e0", "#efc5b8"; GREY, GREY_H = "#f3f3f3", "#dcdcdc"
+
+    # ---- row 1: source and acquisition ------------------------------------------------
+    box(2, 86, 46, 12.5, "Source: Chalfont Centre for Epilepsy (UCL), retrospective",
+        ["3 T GE scanner, same scanner for patients and controls",
+         "multi-delay enhanced ASL (eASL): transit-time-corrected CBF (primary),",
+         "uncorrected flow (sensitivity); 1.875 \u00d7 1.875 \u00d7 4 mm; MPRAGE T1"], BLUE, BLUE_H)
+    box(52, 86, 46, 12.5, "Complete imaging available",
+        ["controls 70  |  patients with a discrete MRI lesion 47  |  MRI-negative 53",
+         "clinical lateralization from resection, lesion + MDT conclusion,",
+         "or presurgical hypothesis; no postoperative outcome"], BLUE, BLUE_H)
+
+    # ---- row 2: QC ---------------------------------------------------------------------
+    arrow(25, 86, 25, 82); arrow(75, 86, 75, 82)
+    box(2, 66.5, 46, 15.5, "Pre-specified quality rule (before any result was read)",
+        ["gray/white ratio \u2265 1.2; GM CBF 15\u2013100 mL/100 g/min; saturation \u2264 1 %;",
+         "controls only: left/right GM ratio 0.80\u20131.25",
+         "excluded: 3 controls (+1 retest duplicate), 1 patient (technical)",
+         "flagged, kept: 2 patients with global L/R imbalance; 3 registration flags"], AMBER, AMBER_H)
+    box(52, 66.5, 46, 15.5, "Analyzed cohort",
+        ["66 controls: age 40 \u00b1 13 y (19\u201366), 12 women",
+         "99 patients: age 35 \u00b1 9 y (19\u201360), 31 women; lesional 47 / MRI-negative 52",
+         "side L 43 / R 50 / bilateral 6;  lobe: temporal 51, frontal 22,",
+         "multilobar 24, parietal 1, occipital 1;  hippocampal sclerosis 22",
+         "reference: resected 12 / lesion + MDT 35 / clinical hypothesis 52"], GREEN, GREEN_H)
+
+    # ---- row 3: processing --------------------------------------------------------------
+    line(25, 66.5, 25, 62.5); line(75, 66.5, 75, 62.5); line(25, 62.5, 75, 62.5); arrow(50, 62.5, 50, 59.5)
+    box(2, 46.5, 96, 13, "Identical processing to the in-house pipeline",
+        ["ASL \u2192 T1 rigid (FSL flirt)  \u2192  T1 \u2192 left\u2013right symmetric template (flirt + fnirt, 0.8 mm)  \u2192  CBF resampled once",
+         "no FreeSurfer: gray matter and the 37 region pairs from a fixed template atlas (voxel-wise mode of the 180 HCP control parcellations)",
+         "normative reference: the 66 controls pooled (too few for age bands); every control also scored leave-one-out as a pseudo-patient"], AMBER, AMBER_H)
+
+    # ---- row 4: analyses --------------------------------------------------------------
+    arrow(24, 46.5, 24, 42.5); arrow(76, 46.5, 76, 42.5)
+    box(2, 22.5, 46, 20, "A   Pre-specified primary endpoint (as implemented)",
+        ["voxel-wise $z_{\\mathrm{AI}}$ clusters, production rule, clinical tier, 37-region scope",
+         "metric: balanced accuracy vs. majority baseline (0.54), Wilson CI;",
+         "bilateral / no call = disagreement",
+         "secondary: control false-positive rate of strong/moderate calls",
+         "sensitivity: rule \u00d7 tier \u00d7 scope grid, uncorrected flow, QC strata"], TEAL, TEAL_H)
+    box(52, 22.5, 46, 20, "B   Enhanced estimators (post hoc, identical on both cohorts)",
+        ["regional normative $\\bar{z}_{\\mathrm{LI}}$ (temporal, mesial, all 37) from the atlas regions",
+         "8-mm smoothed voxel-wise $z_{\\mathrm{AI}}$ on a mirror-symmetric 2.4-mm grid,",
+         "hypoperfused z-mass per hemisphere (each pair counted once)",
+         "call threshold = 95th percentile of leave-one-out controls (5 % FP)",
+         "multi-metric comparison: call rate, PPV, sensitivity L/R, AUC, LR$^+$, strata"], GREEN, GREEN_H)
+
+    # ---- row 5: outputs ----------------------------------------------------------------
+    line(24, 22.5, 24, 18.5); line(76, 22.5, 76, 18.5); line(24, 18.5, 76, 18.5); arrow(50, 18.5, 50, 15.5)
+    box(6, 2, 88, 13.5, "Results used in this article",
+        ["primary rule 58 of 93 (balanced accuracy 0.63; strong calls 16 of 20);  regional temporal statistic 61 of 93 (0.65, AUC 0.69),",
+         "calibrated calls 12 of 13;  calibration: 6.1 % of gray matter beyond |$z_{\\mathrm{AI}}$| \u2265 1.96 in controls, 9.6 % in patients",
+         "(in-house: 6.9 % / 12.9 %);  an antisymmetric multivariate classifier gave no further gain"], GREY, GREY_H)
+
+    fig.savefig(FIG / "fig5_external_cohort.png", dpi=300, bbox_inches="tight", pad_inches=0.04)
+    fig.savefig(FIG / "fig5_external_cohort.pdf", bbox_inches="tight", pad_inches=0.04)
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     fig1_schematic()
     fig4_enhanced()
+    fig5_external_cohort()
     fig2_calibration()
     fig3_cases([("P029", "left TLE\nhyperperfusion, concordant"),
                 ("P016", "right TLE, MRI-negative\nhypoperfusion, concordant"),

@@ -122,14 +122,16 @@ def main():
         cc["value"] = -cc.patient_id.map(t["vol_LI"])          # negative = left, as for the other statistics
     strong = cc.copy(); strong["call"] = np.where(cc.algo_confidence.str.startswith("Strong"), cc.call, "none")
     strongmod = cc.copy(); strongmod["call"] = np.where(cc.algo_confidence.str.startswith(("Strong", "Moderate")), cc.call, "none")
-    fp_asis = np.nan
-    pc = cfg.output_dir / "lateralization" / "pseudo_control_calls.csv"
+    fp_asis = fp_sm = fp_strong = np.nan
+    pc = cfg.output_dir / "lateralization" / "eval_control_false_positives.csv"   # scripts/chalfont/evaluate_lateralization.py
     if pc.exists():
-        d = pd.read_csv(pc); fp_asis = float(d["lateralizing_call"].mean()) if "lateralizing_call" in d else np.nan
+        d = pd.read_csv(pc).set_index("tier")
+        if "clinical" in d.index:
+            r = d.loc["clinical"]; fp_asis = float(r["fp_rate_any"]); fp_sm = float(r["fp_rate_strong_moderate"]); fp_strong = float(r["Strong"] / r["n_controls"])
     d0 = cc.rename(columns={"patient_id": "id"})[["id", "ez", "call", "value"]]
     rows.append(metrics(d0, strata, "voxel rule, clinical tier (any call)", fp_asis))
-    rows.append(metrics(strongmod.rename(columns={"patient_id": "id"})[["id", "ez", "call", "value"]], strata, "voxel rule, strong+moderate calls only"))
-    rows.append(metrics(strong.rename(columns={"patient_id": "id"})[["id", "ez", "call", "value"]], strata, "voxel rule, strong calls only"))
+    rows.append(metrics(strongmod.rename(columns={"patient_id": "id"})[["id", "ez", "call", "value"]], strata, "voxel rule, strong+moderate calls only", fp_sm))
+    rows.append(metrics(strong.rename(columns={"patient_id": "id"})[["id", "ez", "call", "value"]], strata, "voxel rule, strong calls only", fp_strong))
     # --- enhanced estimators ---------------------------------------------------------
     R = pd.read_csv(v2 / "R_patients.csv"); V = pd.read_csv(v2 / "V_patients.csv"); S = pd.read_csv(v2 / "summary.csv").set_index("statistic")
     lR = pd.read_csv(v2 / "R_loo_controls.csv"); lV = pd.read_csv(v2 / "V_loo_controls.csv")
