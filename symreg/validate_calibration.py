@@ -30,7 +30,7 @@ def ai_map(perf):
     left = perf.astype(np.float64)
     right = np.flip(left, axis=0)
     mean_lr = (left + right) / 2.0
-    valid = mean_lr > 1.0
+    valid = (left > 0) & (right > 0)  # both sides positive (audit 2026-10-19)
     ai = np.zeros_like(left)
     ai[valid] = 100.0 * (left[valid] - right[valid]) / mean_lr[valid]
     return ai, valid

@@ -34,6 +34,7 @@ import nibabel as nib
 import pandas as pd
 from scipy import ndimage, stats
 from ez_ground_truth import DISCARDED  # patients excluded from the cohort (P014)
+import dataset_config  # --dataset {inhouse,chalfont} switch (external validation)
 
 # ============================================================================
 # CONFIGURATION
@@ -60,6 +61,40 @@ CLINICAL_SPREADSHEET = BASE_DIR / "clinical_spreadsheet.xlsx"
 # becomes the new canonical (original-space outputs archived separately).
 SYM_MODE = False
 SYM_DIR = BASE_DIR / "symreg" / "sym_perf"
+PERF_SUFFIX = "_perf_sym"   # <ID><PERF_SUFFIX>.nii.gz in SYM_DIR (chalfont: --perf-variant)
+
+# Dataset switch (external validation). The in-house configuration equals the
+# defaults above; `_apply_dataset_config()` in main() overrides them for
+# --dataset chalfont (flat ID-based discovery, fixed template atlas, subjects.csv).
+DATASET_CFG = dataset_config.configure("inhouse")
+
+
+def _apply_dataset_config(cfg):
+    """Point the module globals at the selected dataset."""
+    global DATASET_CFG, CONTROLS_BASE_DIR, PATIENT_DATASET_DIR, OUTPUT_DIR
+    global SYM_DIR, SYM_MODE, PERF_SUFFIX, CLINICAL_SPREADSHEET, GROUP_DEFINITIONS
+    DATASET_CFG = cfg
+    CONTROLS_BASE_DIR = cfg.controls_base_dir
+    PATIENT_DATASET_DIR = cfg.patient_dataset_dir
+    OUTPUT_DIR = cfg.output_dir
+    SYM_DIR = cfg.sym_dir
+    PERF_SUFFIX = cfg.perf_suffix
+    CLINICAL_SPREADSHEET = cfg.demographics_path
+    if cfg.group_definitions is not None:
+        GROUP_DEFINITIONS = cfg.group_definitions
+    if cfg.sym_mode is not None:
+        SYM_MODE = cfg.sym_mode
+
+
+def _sym_perf_path(subject_id):
+    return SYM_DIR / f"{subject_id}{PERF_SUFFIX}.nii.gz"
+
+
+def _patient_available(patient_id):
+    """Symmetric mode needs only the registered perfusion; otherwise the Dataset dir."""
+    if SYM_MODE:
+        return _sym_perf_path(patient_id).exists()
+    return (PATIENT_DATASET_DIR / patient_id).exists()
 
 # ============================================================================
 # GROUP DEFINITIONS  –  extend as new controls arrive
@@ -207,8 +242,20 @@ class ControlGroupBuilder:
 
     # ------------------------------------------------------------------
     def discover_subjects(self):
-        """Find all control subject directories for this group."""
+        """Find all control subject directories for this group.
+
+        External datasets list control IDs explicitly (group_def["subject_ids"]);
+        subjects are then Path objects whose .name is the ID (only .name is used
+        in symmetric mode), and IDs without a registered perfusion are skipped.
+        """
         subjects = []
+        if self.group_def.get("subject_ids") is not None:
+            for sid in self.group_def["subject_ids"]:
+                if _sym_perf_path(sid).exists():
+                    subjects.append(CONTROLS_BASE_DIR / sid)
+                else:
+                    print(f"  ⚠  {sid}: no registered perfusion {_sym_perf_path(sid).name} (skipping)")
+            return subjects
         for subdir_name in self.group_def["subdirs"]:
             subdir = CONTROLS_BASE_DIR / subdir_name
             if not subdir.exists():
@@ -224,7 +271,7 @@ class ControlGroupBuilder:
     def _find_perfusion_file(subject_dir):
         """Return path to the MNI-space upsampled perfusion NIfTI."""
         if SYM_MODE:
-            p = SYM_DIR / f"{subject_dir.name}_perf_sym.nii.gz"
+            p = _sym_perf_path(subject_dir.name)
             if not p.exists():
                 raise FileNotFoundError(f"No symmetric perfusion for {subject_dir.name}: {p}")
             return p
@@ -356,13 +403,37 @@ class ControlGroupBuilder:
         print(f"\n  ✓ Group stats saved to: {self.output_dir}")
         print(f"    Brain mask: {brain_mask.sum():,} voxels ({mask_pct:.1f}%)")
         print(f"    Mean CBF in mask: {metadata['mean_cbf_in_mask']:.2f} ml/100g/min")
-        print(f"    SD range in mask: [{sd[brain_mask].min():.2f}, {sd[brain_mask].max():.2f}]")
+        if brain_mask.any():
+            print(f"    SD range in mask: [{sd[brain_mask].min():.2f}, {sd[brain_mask].max():.2f}]")
+        else:
+            print("    ⚠  empty brain mask (fewer than 2 subjects with signal?)")
 
         return mean, sd, brain_mask, count, reference_img
 
     # ------------------------------------------------------------------
     def build_consensus_parcellation(self):
-        """Majority-vote parcellation across all control subjects."""
+        """Majority-vote parcellation across all control subjects.
+
+        With a fixed template atlas (chalfont: no per-subject aparc+aseg) the
+        atlas is copied into the group dir as `consensus_parcellation.nii.gz`,
+        so every downstream step reads the parcellation from the usual place.
+        """
+        if DATASET_CFG.parcellation == "fixed_atlas":
+            atlas_path = DATASET_CFG.atlas_path
+            if atlas_path is None or not atlas_path.exists():
+                raise FileNotFoundError(
+                    f"Fixed template atlas not found: {atlas_path} "
+                    f"(run scripts/chalfont/build_template_atlas.py)")
+            print(f"\n  Using fixed template atlas as consensus parcellation: {atlas_path}")
+            atlas_img = nib.load(str(atlas_path))
+            consensus = np.asarray(atlas_img.dataobj).astype(np.int32)
+            out_img = nib.Nifti1Image(consensus, atlas_img.affine, atlas_img.header)
+            out_img.header["descrip"] = f"Fixed template atlas - {self.group_key}"
+            nib.save(out_img, str(self.output_dir / "consensus_parcellation.nii.gz"))
+            n_labels = len(np.unique(consensus[consensus > 0]))
+            print(f"  ✓ Consensus parcellation saved: {n_labels} unique labels")
+            return consensus
+
         subjects = self.discover_subjects()
         n_subjects = len(subjects)
         print(f"\n  Building consensus parcellation from {n_subjects} subjects...")
@@ -436,25 +507,41 @@ class ClusterAnalyzer:
     def find_clusters(self, binary_map, zscore_map, affine):
         """Label connected components and compute per-cluster statistics.
 
-        Returns list of dicts, one per surviving cluster.
+        Returns list of dicts, one per surviving cluster. Each cluster carries
+        its voxels as ascending flat (C-order) indices under ``"indices"``, not
+        a full-size boolean mask: on the 227x272x227 grid one mask is 14 MB and
+        a patient with ~1000 raw clusters needed 14 GB of RAM (2026-10-20, OOM).
+        Voxel order equals that of ``np.argwhere(mask)`` / ``zscore_map[mask]``,
+        so every statistic (centroid, peak, mean) is identical to the old
+        mask-based version.
         """
         labeled, n_raw = ndimage.label(binary_map, structure=self.structure)
+        flat_labels = labeled.ravel()
+        nz = np.flatnonzero(flat_labels)                 # ascending C-order
+        if nz.size == 0:
+            return []
+        order = np.argsort(flat_labels[nz], kind="stable")   # by label, index order kept
+        nz_sorted = nz[order]
+        lab_sorted = flat_labels[nz_sorted]
+        bounds = np.searchsorted(lab_sorted, np.arange(1, n_raw + 2))
+        z_flat = zscore_map.ravel()
+        shape = binary_map.shape
 
         clusters = []
         for cid in range(1, n_raw + 1):
-            mask_c = labeled == cid
-            size = int(mask_c.sum())
+            idx = nz_sorted[bounds[cid - 1]:bounds[cid]]
+            size = int(idx.size)
             if size < self.min_size:
                 continue
 
-            z_vals = zscore_map[mask_c]
-            com = ndimage.center_of_mass(mask_c)
+            z_vals = z_flat[idx]
+            coords = np.stack(np.unravel_index(idx, shape), axis=1)   # == np.argwhere(mask)
+            com = coords.mean(axis=0)                                 # == ndimage.center_of_mass(mask)
             centroid_ijk = tuple(int(round(c)) for c in com)
             centroid_mni = self._ijk_to_mni(centroid_ijk, affine)
 
             peak_idx = np.argmax(np.abs(z_vals))
-            peak_coords = np.argwhere(mask_c)
-            peak_ijk = tuple(peak_coords[peak_idx])
+            peak_ijk = tuple(int(v) for v in coords[peak_idx])
             peak_mni = self._ijk_to_mni(peak_ijk, affine)
 
             clusters.append({
@@ -467,7 +554,7 @@ class ClusterAnalyzer:
                 "mean_z": round(float(z_vals.mean()), 3),
                 "peak_ijk": peak_ijk,
                 "peak_mni": tuple(round(c, 1) for c in peak_mni),
-                "mask": mask_c,
+                "indices": idx,
             })
 
         return clusters
@@ -481,8 +568,9 @@ class ClusterAnalyzer:
     def create_cluster_label_map(self, clusters, shape):
         """Build a 3D volume with cluster IDs."""
         label_map = np.zeros(shape, dtype=np.int32)
+        flat = label_map.ravel()                      # view (C-contiguous)
         for cl in clusters:
-            label_map[cl["mask"]] = cl["cluster_id"]
+            flat[cl["indices"]] = cl["cluster_id"]
         return label_map
 
 
@@ -495,16 +583,17 @@ class RegionMapper:
 
     def __init__(self, parcellation_data):
         self.parc = parcellation_data
+        self._parc_flat = np.ascontiguousarray(parcellation_data).ravel()
 
-    def map_cluster(self, cluster_mask):
-        """Return region overlap for a single cluster.
+    def map_cluster(self, cluster_indices):
+        """Return region overlap for a single cluster (flat voxel indices).
 
         Returns list of (label, name, n_voxels, pct) sorted by overlap.
         """
-        labels_in_cluster = self.parc[cluster_mask]
+        labels_in_cluster = self._parc_flat[cluster_indices]
         labels_in_cluster = labels_in_cluster[labels_in_cluster > 0]
         if len(labels_in_cluster) == 0:
-            return [(-1, "Unknown", int(cluster_mask.sum()), 100.0)]
+            return [(-1, "Unknown", int(len(cluster_indices)), 100.0)]
 
         unique, counts = np.unique(labels_in_cluster, return_counts=True)
         total = counts.sum()
@@ -514,9 +603,9 @@ class RegionMapper:
             result.append((int(lab), name, int(cnt), round(100 * cnt / total, 1)))
         return result
 
-    def primary_region(self, cluster_mask):
+    def primary_region(self, cluster_indices):
         """Return the name of the dominant region for a cluster."""
-        overlap = self.map_cluster(cluster_mask)
+        overlap = self.map_cluster(cluster_indices)
         return overlap[0][1] if overlap else "Unknown"
 
 
@@ -543,7 +632,7 @@ class PatientZScoreAnalyzer:
     def _find_patient_perfusion(patient_dir):
         """Find the patient's perfusion NIfTI (resampled-to-T1w, actually MNI)."""
         if SYM_MODE:
-            p = SYM_DIR / f"{patient_dir.name}_perf_sym.nii.gz"
+            p = _sym_perf_path(patient_dir.name)
             if not p.exists():
                 raise FileNotFoundError(f"No symmetric perfusion for {patient_dir.name}: {p}")
             return p
@@ -561,8 +650,9 @@ class PatientZScoreAnalyzer:
     def process_patient(self, patient_id):
         """Full pipeline for one patient: z-score → threshold → cluster → regions."""
         patient_dir = PATIENT_DATASET_DIR / patient_id
-        if not patient_dir.exists():
-            print(f"  ✗ Patient directory not found: {patient_dir}")
+        if not _patient_available(patient_id):
+            print(f"  ✗ Patient not found: "
+                  f"{_sym_perf_path(patient_id) if SYM_MODE else patient_dir}")
             return None
 
         out_dir = OUTPUT_DIR / "patients" / patient_id
@@ -599,7 +689,7 @@ class PatientZScoreAnalyzer:
 
         for direction, clusters in [("hyper", hyper_clusters), ("hypo", hypo_clusters)]:
             for cl in clusters:
-                primary = self.region_mapper.primary_region(cl["mask"])
+                primary = self.region_mapper.primary_region(cl["indices"])
                 all_cluster_rows.append({
                     "patient_id": patient_id,
                     "group": self.group_key,
@@ -618,7 +708,7 @@ class PatientZScoreAnalyzer:
                     "primary_region": primary,
                 })
 
-                overlap = self.region_mapper.map_cluster(cl["mask"])
+                overlap = self.region_mapper.map_cluster(cl["indices"])
                 for lab, name, nvox, pct in overlap:
                     all_region_rows.append({
                         "patient_id": patient_id,
@@ -752,9 +842,10 @@ class PatientZScoreAnalyzer:
 class ControlZScoreAnalysis:
     """Orchestrate the full z-score comparison pipeline."""
 
-    def __init__(self, group_key=None, patient_id=None, rebuild=False):
+    def __init__(self, group_key=None, patient_id=None, rebuild=False, group_only=False):
         self.rebuild = rebuild
         self.specific_patient = patient_id
+        self.group_only = group_only   # build/load the group stats, process no patient
         self.demographics = self._load_demographics()
 
         if group_key:
@@ -765,7 +856,13 @@ class ControlZScoreAnalysis:
             self.groups_to_run = self._available_groups()
 
     def _load_demographics(self):
-        """Load patient demographics from clinical spreadsheet."""
+        """Load patient demographics from clinical spreadsheet (or subjects.csv)."""
+        if DATASET_CFG.demographics_kind == "subjects_csv":
+            try:
+                return DATASET_CFG.demographics()
+            except FileNotFoundError as e:
+                print(f"  ⚠  {e}")
+                return {}
         if not CLINICAL_SPREADSHEET.exists():
             print(f"  ⚠  Clinical spreadsheet not found: {CLINICAL_SPREADSHEET}")
             return {}
@@ -801,6 +898,8 @@ class ControlZScoreAnalysis:
 
     def _groups_for_patient(self, patient_id):
         """Determine which control group(s) apply for a patient."""
+        if not DATASET_CFG.is_inhouse:
+            return DATASET_CFG.groups_for_patient(patient_id)
         if patient_id not in self.demographics:
             print(f"  ⚠  No demographics for {patient_id}, defaulting to all available groups")
             return self._available_groups()
@@ -819,6 +918,8 @@ class ControlZScoreAnalysis:
 
     def _available_groups(self):
         """Return group keys whose control subdirectories actually exist."""
+        if not DATASET_CFG.is_inhouse:
+            return DATASET_CFG.available_groups()
         available = []
         for gkey, gdef in GROUP_DEFINITIONS.items():
             has_data = any(
@@ -833,8 +934,14 @@ class ControlZScoreAnalysis:
 
     def _patients_for_group(self, group_key):
         """Return patient IDs that match this control group."""
+        if self.group_only:
+            return []
         if self.specific_patient:
             return [self.specific_patient]
+        if not DATASET_CFG.is_inhouse:
+            # ID-list discovery: discrete + negative patients with a registered
+            # perfusion, matched on age_at_scan (sex-pooled bands; CH_ALL = all).
+            return DATASET_CFG.patients_for_group(group_key)
 
         gdef = GROUP_DEFINITIONS[group_key]
         lo, hi = gdef["age_range"]
@@ -965,10 +1072,14 @@ def main():
                         help="Process a specific control group (e.g., FM_20_39)")
     parser.add_argument("--rebuild-group", action="store_true",
                         help="Force rebuild group statistics even if cached")
+    parser.add_argument("--group-only", action="store_true",
+                        help="Build/load the group statistics and consensus parcellation only "
+                             "(no patients); per-patient runs (--patient) can then be parallelised.")
     parser.add_argument("--threshold", "-t", type=float, default=None,
                         help=f"Z-score threshold (default: {ZSCORE_THRESHOLD})")
     parser.add_argument("--min-cluster", type=int, default=None,
                         help=f"Minimum cluster size in voxels (default: {MIN_CLUSTER_SIZE})")
+    dataset_config.add_dataset_args(parser)
     args = parser.parse_args()
 
     if args.threshold is not None:
@@ -976,13 +1087,17 @@ def main():
     if args.min_cluster is not None:
         MIN_CLUSTER_SIZE = args.min_cluster
     SYM_MODE = args.sym
+    _apply_dataset_config(dataset_config.configure(args.dataset, perf_variant=args.perf_variant, band_policy=args.band_policy))
+    if not DATASET_CFG.is_inhouse:
+        print(f"  [DATASET] {DATASET_CFG.summary()}")
     if SYM_MODE:
-        print("  [SYM] Using symmetric-template-registered inputs from symreg/sym_perf/")
+        print(f"  [SYM] Using symmetric-template-registered inputs from {SYM_DIR}/")
 
     pipeline = ControlZScoreAnalysis(
         group_key=args.group,
         patient_id=args.patient,
         rebuild=args.rebuild_group,
+        group_only=args.group_only,
     )
     pipeline.run()
 

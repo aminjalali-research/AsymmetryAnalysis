@@ -45,43 +45,111 @@ plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 9})
 
 # --------------------------------------------------------------------------
 def fig1_schematic():
-    fig, ax = plt.subplots(figsize=(7.2, 4.2))
-    ax.set_xlim(0, 100); ax.set_ylim(0, 100); ax.axis("off")
+    """Pipeline overview: inputs -> common preprocessing -> two pipelines -> outputs -> reference."""
+    plt.rcParams.update({"font.family": ["Liberation Sans", "DejaVu Sans"],
+                         "mathtext.fontset": "custom", "mathtext.rm": "Liberation Sans",
+                         "mathtext.it": "Liberation Sans:italic", "mathtext.bf": "Liberation Sans:bold"})
+    fig = plt.figure(figsize=(7.2, 4.6))
+    ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, 100); ax.set_ylim(0, 100); ax.axis("off")
+    EC, INK, MUTED = "#4a4a4a", "#1f1f1f", "#555555"
 
-    def box(x, y, w, h, text, fc="#f2f2f2", fs=8.5, bold=False):
-        ax.add_patch(mpatches.FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.4,rounding_size=1.5",
-                                             fc=fc, ec="#444444", lw=0.9))
-        ax.text(x + w / 2, y + h / 2, text, ha="center", va="center", fontsize=fs,
-                fontweight="bold" if bold else "normal", wrap=True)
+    def box(x, y, w, h, title, lines, fc, hc, fs=7.4, tfs=8.0, align="left", pad=1.6):
+        ax.add_patch(mpatches.FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0,rounding_size=1.2",
+                                             fc=fc, ec=EC, lw=0.8, zorder=2))
+        if title:
+            th = 5.2
+            ax.add_patch(mpatches.FancyBboxPatch((x, y + h - th), w, th, boxstyle="round,pad=0,rounding_size=1.2",
+                                                 fc=hc, ec="none", zorder=3, clip_on=False))
+            ax.add_patch(mpatches.Rectangle((x, y + h - th), w, th / 2, fc=hc, ec="none", zorder=3))
+            ax.text(x + pad, y + h - th / 2, title, ha="left", va="center", fontsize=tfs,
+                    fontweight="bold", color=INK, zorder=4)
+            top = y + h - th
+        else:
+            top = y + h
+        body = "\n".join(lines)
+        if align == "left":
+            ax.text(x + pad, (top + y) / 2, body, ha="left", va="center", fontsize=fs, color=INK,
+                    linespacing=1.45, zorder=4)
+        else:
+            ax.text(x + w / 2, (top + y) / 2, body, ha="center", va="center", fontsize=fs, color=INK,
+                    linespacing=1.45, zorder=4)
 
-    def arrow(x0, y0, x1, y1):
-        ax.annotate("", xy=(x1, y1), xytext=(x0, y0),
-                    arrowprops=dict(arrowstyle="->", lw=0.9, color="#444444"))
+    def arrow(x0, y0, x1, y1, text=None, tx=None, ty=None):
+        ax.annotate("", xy=(x1, y1), xytext=(x0, y0), zorder=1,
+                    arrowprops=dict(arrowstyle="-|>", lw=0.9, color=EC, shrinkA=0, shrinkB=0,
+                                    mutation_scale=8))
+        if text:
+            ax.text(tx, ty, text, fontsize=6.6, color=MUTED, ha="center", va="center",
+                    bbox=dict(fc="white", ec="none", pad=0.6), zorder=5)
 
-    # inputs
-    box(2, 78, 30, 16, "Patients (n = 17)\nmulti-PLD pCASL + T1w\nHCP-ASL processing", fc="#dbe9f6")
-    box(68, 78, 30, 16, "Healthy controls (n = 180)\nHCP Lifespan ASL\nthree age bands of 60", fc="#dbe9f6")
-    box(35, 78, 30, 16, "Left-right symmetric\nT1 template\n(FSL flirt + fnirt)", fc="#fff2cc")
-    arrow(32, 86, 35, 86); arrow(68, 86, 65, 86)
+    def line(x0, y0, x1, y1):
+        ax.plot([x0, x1], [y0, y1], color=EC, lw=0.9, zorder=1, solid_capstyle="round")
 
-    # pipeline A
-    box(2, 46, 44, 24, "Pipeline A  (regional)\n37 homologous region pairs\n(Desikan-Killiany + hippocampus,\namygdala, thalamus)\n15 asymmetry indices, 4 aggregations", fc="#e2f0d9")
-    # pipeline B
-    box(54, 46, 44, 24, "Pipeline B  (voxel-wise)\nAI(v) = 100 (L - R) / mean(L, R)\nzAI(v) = (AI - mean_ctrl) / SD_ctrl\nbilateral SD pooling, 5 % SD floor\nclusters |zAI| >= 3, >= 50 voxels", fc="#e2f0d9")
-    arrow(17, 78, 17, 70); arrow(50, 78, 76, 70); arrow(83, 78, 83, 70)
+    BLUE, BLUE_H = "#e4edf7", "#c6d8ec"
+    AMBER, AMBER_H = "#fbf1dc", "#f1dcad"
+    TEAL, TEAL_H = "#e1f0ec", "#b9dcd2"
+    GREEN, GREEN_H = "#e8f1df", "#c7ddb4"
+    ROSE, ROSE_H = "#f9e6e0", "#efc5b8"
+    GREY, GREY_H = "#f3f3f3", "#dcdcdc"
 
-    # direction inference
-    box(54, 22, 44, 18, "Direction-of-abnormality inference\nper-side perfusion z vs controls:\nhypo / hyper / mixed / subtle\npredicted side = deviating hemisphere", fc="#fce4d6")
-    arrow(76, 46, 76, 40)
+    # ---- row 1: inputs and common processing ------------------------------
+    box(2, 84, 27, 14, "Patients  (n = 17)",
+        ["drug-resistant focal epilepsy", "13 unilateral MDT hypothesis (8 L, 5 R)",
+         "multi-PLD pCASL 2.5 mm + T1w, 3 T"], BLUE, BLUE_H)
+    box(71, 84, 27, 14, "Healthy controls  (n = 180)",
+        ["HCP Lifespan multi-PLD pCASL", "three age bands, 60 each",
+         "20\u201339, 40\u201359, 60\u201379 years"], BLUE, BLUE_H)
+    box(33.5, 84, 33, 14, "Identical processing",
+        ["HCP-ASL: calibrated CBF (mL/100 g/min)", "FSL flirt + fnirt to a left\u2013right",
+         "symmetric T1 template (0.8 mm)"], AMBER, AMBER_H)
+    arrow(29, 91, 33.5, 91); arrow(71, 91, 66.5, 91)
 
-    # outputs
-    box(2, 4, 44, 12, "Lateralization score per patient\nROC vs MDT reference (n = 13)", fc="#ededed")
-    box(54, 4, 44, 12, "Patient report: side, strength,\nlobe-level clusters, direction class", fc="#ededed")
-    arrow(24, 46, 24, 16); arrow(76, 22, 76, 16)
-    ax.text(50, 1, "Both outputs are compared with the multidisciplinary-team (MDT) lateralization",
-            ha="center", va="bottom", fontsize=8, style="italic")
-    fig.savefig(FIG / "fig1_pipeline_overview.png", dpi=300, bbox_inches="tight")
-    fig.savefig(FIG / "fig1_pipeline_overview.pdf", bbox_inches="tight")
+    # split to the two pipelines
+    line(50, 84, 50, 79.5); line(24, 79.5, 76, 79.5)
+    arrow(24, 79.5, 24, 75.5); arrow(76, 79.5, 76, 75.5)
+
+    # ---- row 2: pipelines ----------------------------------------------------
+    box(2, 49, 45, 26.5, "A   Regional pipeline",
+        ["37 homologous region pairs: hippocampus, amygdala,",
+         "thalamus and 34 Desikan\u2013Killiany cortical regions;",
+         "mean CBF per region and side",
+         "LI$_i$ = (CBF$_{L,i}$ \u2212 CBF$_{R,i}$) / (CBF$_{L,i}$ + CBF$_{R,i}$) and 14 further indices",
+         "9 aggregation scores \u2192 one lateralization score per patient"],
+        TEAL, TEAL_H, fs=7.1)
+    box(53, 49, 45, 26.5, "B   Voxel-wise pipeline",
+        ["AI(v) = 200 [CBF(v) \u2212 CBF(v\u0304)] / [CBF(v) + CBF(v\u0304)],  v\u0304 = mirror voxel",
+         "$z_{\\mathrm{AI}}$(v) = [AI(v) \u2212 \u03bc$_{\\mathrm{AI}}$(v)] / \u03c3$_{\\mathrm{AI}}$(v);  age-band controls,",
+         "\u03c3 floored at 5 %; gray matter, 37-region scope",
+         "clusters: clinical tier |$z_{\\mathrm{AI}}$| \u2265 4, \u2265 100 voxels (51 mm\u00b3);",
+         "research \u2265 3 / \u2265 50; surgical \u2265 5 / \u2265 200; native \u2265 20 voxels"],
+        GREEN, GREEN_H, fs=7.1)
+
+    # ---- row 3: direction inference (B only) ---------------------------------
+    arrow(76, 49, 76, 44.5)
+    box(53, 29, 45, 15.5, "Direction of abnormality (per cluster)",
+        ["per-side perfusion z vs controls; |z| \u2265 2 = deviating side",
+         "hypo  /  hyper  /  mixed  /  subtle",
+         "predicted side = deviating hemisphere; mirrored pairs counted once"],
+        ROSE, ROSE_H, fs=7.1)
+
+    # ---- row 4: outputs ----------------------------------------------------
+    arrow(24, 49, 24, 23.5); arrow(76, 29, 76, 23.5)
+    box(2, 14, 45, 9.5, None,
+        ["Lateralization score per patient", "ROC, bootstrap CI, leave-one-out cross-validation"],
+        "white", GREY_H, align="center", fs=7.3)
+    box(53, 14, 45, 9.5, None,
+        ["Patient report: side, call strength (strong / moderate / weak),", "lobe of largest clusters, direction class"],
+        "white", GREY_H, align="center", fs=7.3)
+
+    # ---- row 5: reference standard ------------------------------------------
+    line(24, 14, 24, 11); line(76, 14, 76, 11); line(24, 11, 76, 11); arrow(50, 11, 50, 8.4)
+    box(6, 0.8, 88, 7.6, None,
+        ["Reference standard: multidisciplinary-team (MDT) side in 13 unilateral patients (8 L, 5 R); agreement and balanced",
+         "accuracy vs. the always-left baseline (8 of 13, 0.50). External test: 99 Chalfont patients, 66 same-scanner controls, same pipeline"],
+        GREY, GREY_H, align="center", fs=7.0)
+
+    fig.savefig(FIG / "fig1_pipeline_overview.png", dpi=300, bbox_inches="tight", pad_inches=0.04)
+    fig.savefig(FIG / "fig1_pipeline_overview.pdf", bbox_inches="tight", pad_inches=0.04)
     plt.close(fig)
 
 

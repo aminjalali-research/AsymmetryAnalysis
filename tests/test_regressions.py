@@ -170,3 +170,21 @@ def test_mc_methods_survive_zero_voxels(zero_heavy_data, method_name):
     assert mask.dtype == bool and mask.shape == blob.shape
     assert mask.any(), f"{method_name} returned an empty mask"
     assert mask[blob].mean() > 0.5, f"{method_name} missed the planted blob"
+
+
+# ---------------------------------------------------------------------------
+# e. Mirror-AI validity: one-sided non-positive CBF must not be accepted
+#    (audit 2026-10-19; previously mean_lr > 0.001 admitted L=-30/R=+40 -> AI=-1400%)
+# ---------------------------------------------------------------------------
+
+def test_ai_valid_requires_both_sides_positive():
+    mod = _load_script("compute_zai_02", "02_compute_zai.py")
+    perf = np.full((6, 4, 4), 40.0)
+    perf[0, 0, 0] = -30.0          # negative on one side, mirror (index 5) is +40
+    perf[1, 0, 0] = 0.0            # zero on one side
+    ai, valid = mod.compute_asymmetry_map(perf)
+    assert not valid[0, 0, 0] and not valid[5, 0, 0]
+    assert not valid[1, 0, 0] and not valid[4, 0, 0]
+    assert valid[2, 0, 0] and valid[3, 0, 0]
+    assert np.all(np.abs(ai) <= 200.0 + 1e-9)   # |AI| is bounded when both sides > 0
+    assert ai[0, 0, 0] == 0.0

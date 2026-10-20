@@ -47,6 +47,7 @@ import pandas as pd
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 from ez_ground_truth import EZ_GROUND_TRUTH  # noqa: E402
+import dataset_config  # noqa: E402  --dataset {inhouse,chalfont} switch
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +59,17 @@ DEFAULT_SIZE_THRESHOLD = 100       # >= 100 voxels at MNI 0.8mm iso
 
 CLUSTER_REPORT_DIR = BASE_DIR / "results_zscore/asymmetry/patients"
 DEFAULT_OUTPUT_ROOT = BASE_DIR / "results_zscore/clinical"
+DATASET_CFG = dataset_config.configure("inhouse")
+
+
+def _apply_dataset_config(cfg):
+    """Point the module globals (paths + reference standard) at the selected dataset."""
+    global DATASET_CFG, CLUSTER_REPORT_DIR, DEFAULT_OUTPUT_ROOT, EZ_GROUND_TRUTH
+    DATASET_CFG = cfg
+    CLUSTER_REPORT_DIR = cfg.cluster_report_dir
+    DEFAULT_OUTPUT_ROOT = cfg.clinical_dir
+    EZ_GROUND_TRUTH = cfg.ground_truth()
+
 
 SUBCORTICAL_NAMES = {"thalamus", "hippocampus", "amygdala"}
 
@@ -896,11 +908,13 @@ def _parse_args(argv=None):
                    help=f"Output root (default {DEFAULT_OUTPUT_ROOT})")
     p.add_argument("--quiet", action="store_true",
                    help="Suppress the printed report (still writes files)")
+    dataset_config.add_dataset_args(p)
     return p.parse_args(argv)
 
 
 def main(argv=None):
     args = _parse_args(argv)
+    _apply_dataset_config(dataset_config.configure(args.dataset, perf_variant=args.perf_variant, band_policy=args.band_policy))
     out_root = args.output_dir if args.output_dir else DEFAULT_OUTPUT_ROOT
 
     if args.all:

@@ -20,9 +20,15 @@ Answers the questions a presurgical MDT would ask of the cluster reports in
 
 Writes ``ez_analysis_mdt/clinical_stratified_summary.csv`` and
 ``ez_analysis_mdt/clinical_per_patient_predictions.csv`` and prints a report.
+
+``--dataset chalfont`` runs the same rule x scope x tier grid, production rule,
+and direction profile on the external cohort (reference standard from
+subjects.csv; in-house-only strata and the Pipeline A comparison are skipped;
+outputs under ``external_chalfont/results_zscore/lateralization/``).
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import sys
 from pathlib import Path
@@ -33,6 +39,7 @@ import pandas as pd
 BASE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE))
 from ez_ground_truth import EZ_GROUND_TRUTH  # noqa: E402
+import dataset_config  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("ci", BASE / "06_clinical_interpretation.py")
 ci = importlib.util.module_from_spec(_spec)
@@ -40,6 +47,17 @@ _spec.loader.exec_module(ci)
 
 CLUSTER_DIR = BASE / "results_zscore/asymmetry/patients"
 OUT_DIR = BASE / "ez_analysis_mdt"
+DATASET_CFG = dataset_config.configure("inhouse")
+
+
+def _apply_dataset_config(cfg):
+    global DATASET_CFG, CLUSTER_DIR, OUT_DIR, EZ_GROUND_TRUTH, POST_SURGICAL
+    DATASET_CFG = cfg
+    CLUSTER_DIR = cfg.cluster_report_dir
+    OUT_DIR = cfg.analysis_dir
+    EZ_GROUND_TRUTH = cfg.ground_truth()
+    if not cfg.is_inhouse:
+        POST_SURGICAL = set(cfg.post_surgical)
 
 # ---------------------------------------------------------------------------
 # Patient-level clinical metadata (Rai 2026 thesis Tables 11 and 14).
@@ -84,8 +102,9 @@ TIERS = {"research": (3.0, 50), "clinical": (4.0, 100), "surgical": (5.0, 200),
 TEMPORAL_LOBES = {"temporal", "hippocampus", "amygdala"}
 
 
-def load_clusters(pid: str) -> pd.DataFrame:
-    df = pd.read_csv(CLUSTER_DIR / pid / f"{pid}_asymmetry_cluster_report.csv")
+def load_clusters(pid: str, cluster_dir: Path | None = None) -> pd.DataFrame:
+    cluster_dir = CLUSTER_DIR if cluster_dir is None else Path(cluster_dir)
+    df = pd.read_csv(cluster_dir / pid / f"{pid}_asymmetry_cluster_report.csv")
     normed = df["primary_region"].apply(ci._normalize_region)
     df["region_side"] = normed.apply(lambda t: t[0])
     df["region_canon"] = normed.apply(lambda t: t[1])
@@ -167,12 +186,26 @@ def auc_with_ci(scores: np.ndarray, y: np.ndarray, n_boot: int = 10000, seed: in
     return auc, float(np.percentile(boots, 2.5)), float(np.percentile(boots, 97.5))
 
 
-def main() -> None:
-    OUT_DIR.mkdir(exist_ok=True)
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(description="Rule x scope x tier analysis of the zAI cluster reports")
+    dataset_config.add_dataset_args(ap)
+    args = ap.parse_args(argv)
+    _apply_dataset_config(dataset_config.configure(args.dataset, perf_variant=args.perf_variant, band_policy=args.band_policy))
+    inhouse = DATASET_CFG.is_inhouse
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     pids = sorted(p.name for p in CLUSTER_DIR.iterdir() if (p / f"{p.name}_asymmetry_cluster_report.csv").exists())
     pids = [p for p in pids if p in EZ_GROUND_TRUTH]
     data = {p: load_clusters(p) for p in pids}
     unilateral = [p for p in pids if EZ_GROUND_TRUTH[p]["ez"] in ("L", "R")]
+    qc_excl = sorted(set(unilateral) & DATASET_CFG.qc_excluded()) if not inhouse else []
+    if qc_excl:
+        print(f"Excluded from accuracy (registration QC flags): {qc_excl}")
+        unilateral = [p for p in unilateral if p not in qc_excl]
+    n_uni = len(unilateral)
+    n_uni_ex = len([p for p in unilateral if p not in POST_SURGICAL])
+    if not unilateral:
+        print(f"No unilateral (L/R) patients with cluster reports under {CLUSTER_DIR}")
+        return
 
     # ---- 1-3. decision rule x scope x tier ---------------------------------
     rows = []
@@ -193,8 +226,8 @@ def main() -> None:
                     per_patient.append(dict(tier=tier, scope=scope, rule=rule, patient=p,
                                             mdt=truth, pred=pred, L_vox=lv, R_vox=rv, correct=ok))
                 sub = [r for r in per_patient if r["tier"] == tier and r["scope"] == scope and r["rule"] == rule]
-                sens_l = np.mean([r["pred"] == "L" for r in sub if r["mdt"] == "L"])
-                sens_r = np.mean([r["pred"] == "R" for r in sub if r["mdt"] == "R"])
+                sens_l = np.mean([r["pred"] == "L" for r in sub if r["mdt"] == "L"] or [np.nan])
+                sens_r = np.mean([r["pred"] == "R" for r in sub if r["mdt"] == "R"] or [np.nan])
                 rows.append(dict(tier=tier, peak=peak, size=size, scope=scope, rule=rule,
                                  n=len(unilateral), agree=agree, unclear=unclear,
                                  left_correct=int(sum(r["correct"] for r in sub if r["mdt"] == "L")),
@@ -206,7 +239,7 @@ def main() -> None:
     summary.to_csv(OUT_DIR / "clinical_stratified_summary.csv", index=False)
     pp.to_csv(OUT_DIR / "clinical_per_patient_predictions.csv", index=False)
 
-    print("\n=== Rule x scope x tier: unilateral concordance (n=13; n=12 without P024) ===")
+    print(f"\n=== Rule x scope x tier: unilateral concordance (n={n_uni}; n={n_uni_ex} without post-surgical) ===")
     print(summary.to_string(index=False))
 
     # ---- production rule (pre-specified surgeon report) + continuous index --
@@ -225,11 +258,14 @@ def main() -> None:
             y.append(1 if truth == "L" else 0)
             s.append(li)
         y, s = np.array(y), np.array(s)
+        if len(set(y)) < 2:
+            print(f"  {tier:<9} production rule {n_ok}/{n_uni} concordant; AUC n/a (one class)")
+            continue
         auc, lo, hi = auc_with_ci(s, y)
         keep = np.array([p not in POST_SURGICAL for p in unilateral])
-        auc2, lo2, hi2 = auc_with_ci(s[keep], y[keep])
-        print(f"  {tier:<9} production rule {n_ok}/13 concordant; volume LI AUC {auc:.3f} "
-              f"[{lo:.2f}, {hi:.2f}]  (without P024: {auc2:.3f} [{lo2:.2f}, {hi2:.2f}])")
+        auc2, lo2, hi2 = auc_with_ci(s[keep], y[keep]) if len(set(y[keep])) == 2 else (np.nan,) * 3
+        print(f"  {tier:<9} production rule {n_ok}/{n_uni} concordant; volume LI AUC {auc:.3f} "
+              f"[{lo:.2f}, {hi:.2f}]  (without post-surgical: {auc2:.3f} [{lo2:.2f}, {hi2:.2f}])")
     prod = pd.DataFrame(prod_rows)
     prod.to_csv(OUT_DIR / "clinical_production_rule_by_tier.csv", index=False)
     print(prod[prod.tier == "clinical"].to_string(index=False))
@@ -245,31 +281,44 @@ def main() -> None:
         return name, k, len(m)
 
     strata = []
-    strata.append(strat("MRI lesional", [p for p in unilateral if MRI_STATUS[p] == "lesional"]))
-    strata.append(strat("MRI-negative", [p for p in unilateral if MRI_STATUS[p] == "MRI-negative"]))
-    strata.append(strat("MDT High confidence", [p for p in unilateral if EZ_GROUND_TRUTH[p]["confidence"] == "High"]))
-    strata.append(strat("MDT Moderate confidence", [p for p in unilateral if EZ_GROUND_TRUTH[p]["confidence"] == "Moderate"]))
-    strata.append(strat("Reference: defined (surgery/sEEG)", [p for p in unilateral if REFERENCE_TIER.get(p) == "defined"]))
-    strata.append(strat("Reference: probable (MDT only)", [p for p in unilateral if REFERENCE_TIER.get(p) is None]))
-    strata.append(strat("Temporal lobe epilepsy", [p for p in unilateral if p != "P025"]))
-    strata.append(strat("Extratemporal (parietal)", ["P025"]))
+    if inhouse:
+        strata.append(strat("MRI lesional", [p for p in unilateral if MRI_STATUS[p] == "lesional"]))
+        strata.append(strat("MRI-negative", [p for p in unilateral if MRI_STATUS[p] == "MRI-negative"]))
+        strata.append(strat("MDT High confidence", [p for p in unilateral if EZ_GROUND_TRUTH[p]["confidence"] == "High"]))
+        strata.append(strat("MDT Moderate confidence", [p for p in unilateral if EZ_GROUND_TRUTH[p]["confidence"] == "Moderate"]))
+        strata.append(strat("Reference: defined (surgery/sEEG)", [p for p in unilateral if REFERENCE_TIER.get(p) == "defined"]))
+        strata.append(strat("Reference: probable (MDT only)", [p for p in unilateral if REFERENCE_TIER.get(p) is None]))
+        strata.append(strat("Temporal lobe epilepsy", [p for p in unilateral if p != "P025"]))
+        strata.append(strat("Extratemporal (parietal)", ["P025"]))
+    else:
+        # External cohort: MRI status = subjects.csv group (discrete = lesional,
+        # negative = MRI-negative); lobe from ez_lobe.
+        grp = {p: EZ_GROUND_TRUTH[p].get("group", "") for p in unilateral}
+        lobe = {p: EZ_GROUND_TRUTH[p].get("ez_lobe", "") for p in unilateral}
+        strata.append(strat("MRI lesional (discrete)", [p for p in unilateral if grp[p].startswith("discrete")]))
+        strata.append(strat("MRI-negative", [p for p in unilateral if grp[p].startswith("negative")]))
+        strata.append(strat("Temporal lobe (ez_lobe)", [p for p in unilateral if "temporal" in lobe[p]]))
+        strata.append(strat("Extratemporal (ez_lobe)", [p for p in unilateral if lobe[p] and "temporal" not in lobe[p]]))
+        strata.append(strat("Lobe unknown", [p for p in unilateral if not lobe[p]]))
     strata.append(strat("Left EZ", [p for p in unilateral if EZ_GROUND_TRUTH[p]["ez"] == "L"]))
     strata.append(strat("Right EZ", [p for p in unilateral if EZ_GROUND_TRUTH[p]["ez"] == "R"]))
-    strata.append(strat("Excluding post-resection P024", [p for p in unilateral if p not in POST_SURGICAL]))
+    strata.append(strat("Excluding post-resection" + (" P024" if inhouse else ""),
+                        [p for p in unilateral if p not in POST_SURGICAL]))
     pd.DataFrame(strata, columns=["stratum", "concordant", "n"]).to_csv(OUT_DIR / "clinical_strata_default_rule.csv", index=False)
 
-    # ---- 5. Pipeline A vs B agreement ---------------------------------------
-    print("\n=== Pipeline A (temporal signed LI) vs Pipeline B (default rule) ===")
-    both_agree = both_correct = a_only = b_only = 0
-    for p in unilateral:
-        a = PIPELINE_A_PRED[p]
-        b = default.loc[p, "pred"]
-        t = EZ_GROUND_TRUTH[p]["ez"]
-        if a == b:
-            both_agree += 1
-            both_correct += int(a == t)
-        print(f"  {p}: MDT={t}  A={a}  B={b}  {'agree' if a == b else 'DISAGREE'}")
-    print(f"  pipelines agree in {both_agree}/{len(unilateral)}; correct when they agree: {both_correct}/{both_agree}")
+    # ---- 5. Pipeline A vs B agreement (in-house only) -----------------------
+    if inhouse and all(p in PIPELINE_A_PRED for p in unilateral):
+        print("\n=== Pipeline A (temporal signed LI) vs Pipeline B (default rule) ===")
+        both_agree = both_correct = 0
+        for p in unilateral:
+            a = PIPELINE_A_PRED[p]
+            b = default.loc[p, "pred"]
+            t = EZ_GROUND_TRUTH[p]["ez"]
+            if a == b:
+                both_agree += 1
+                both_correct += int(a == t)
+            print(f"  {p}: MDT={t}  A={a}  B={b}  {'agree' if a == b else 'DISAGREE'}")
+        print(f"  pipelines agree in {both_agree}/{len(unilateral)}; correct when they agree: {both_correct}/{both_agree}")
 
     # ---- 6. direction-class profile (all clusters in the research-grade CSV) -
     print("\n=== Direction-class profile per patient (all clusters, |z|>=1.96, >=50 vox) ===")

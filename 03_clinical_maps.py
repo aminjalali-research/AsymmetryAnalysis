@@ -62,6 +62,8 @@ import nibabel as nib
 import pandas as pd
 from scipy import ndimage
 
+import dataset_config  # --dataset {inhouse,chalfont} switch (external validation)
+
 # ============================================================================
 # CONFIGURATION — tuned for presurgical planning
 # ============================================================================
@@ -127,6 +129,32 @@ DATASET_DIR = BASE_DIR / "Dataset"
 # use the symmetric-space parcellation (symreg/sym_perf/{pid}_aparc_sym.nii.gz).
 SYM_MODE = False
 SYM_DIR = BASE_DIR / "symreg" / "sym_perf"
+# Fixed template atlas (chalfont: no per-subject parcellation). When set, the
+# 37-ROI clinical mask is built from this atlas for every patient.
+ATLAS_PATH = None
+
+DATASET_CFG = dataset_config.configure("inhouse")
+
+
+def _apply_dataset_config(cfg):
+    """Point the module globals at the selected dataset."""
+    global DATASET_CFG, RESULTS_DIR, GROUP_KEY, GROUP_DIR, ZAI_PATIENTS_DIR, OUTPUT_DIR
+    global DATASET_DIR, SYM_DIR, SYM_MODE, ATLAS_PATH
+    DATASET_CFG = cfg
+    RESULTS_DIR = cfg.output_dir
+    ZAI_PATIENTS_DIR = RESULTS_DIR / "asymmetry" / "patients"
+    OUTPUT_DIR = RESULTS_DIR / "clinical"
+    DATASET_DIR = cfg.patient_dataset_dir
+    SYM_DIR = cfg.sym_dir
+    if cfg.sym_mode is not None:
+        SYM_MODE = cfg.sym_mode
+    if cfg.parcellation == "fixed_atlas":
+        ATLAS_PATH = cfg.atlas_path
+    if not cfg.is_inhouse:
+        avail = cfg.available_groups()
+        GROUP_KEY = avail[0] if avail else GROUP_KEY
+    GROUP_DIR = RESULTS_DIR / "groups" / GROUP_KEY
+
 
 REGION_NAMES = {
     10: "L-Thalamus", 49: "R-Thalamus",
@@ -206,7 +234,9 @@ def _build_clinical_roi_mask(patient_id, ref_shape=None, ref_affine=None):
     np.ndarray of bool with shape == parcellation.shape, or None if the
     file is missing.
     """
-    if SYM_MODE:
+    if ATLAS_PATH is not None:
+        parc_path = Path(ATLAS_PATH)          # one fixed template-space atlas
+    elif SYM_MODE:
         parc_path = SYM_DIR / f"{patient_id}_aparc_sym.nii.gz"
     else:
         parc_path = DATASET_DIR / patient_id / "aparc+aseg.nii.gz"
@@ -688,12 +718,18 @@ def main():
              "37-ROI clinical scope per CLAUDE.md / DECISIONS.md "
              "2026-05-05 policy, and an unmasked diagnostic variant is "
              "written alongside.")
+    dataset_config.add_dataset_args(parser)
     args = parser.parse_args()
 
     CLINICAL_ZAI_THRESHOLD = args.threshold
     CLINICAL_MIN_CLUSTER = args.min_cluster
     SYM_MODE = args.sym
-    if SYM_MODE:
+    _apply_dataset_config(dataset_config.configure(args.dataset, perf_variant=args.perf_variant, band_policy=args.band_policy))
+    if not DATASET_CFG.is_inhouse:
+        print(f"  [DATASET] {DATASET_CFG.summary()}")
+    if ATLAS_PATH is not None:
+        print(f"  [ATLAS] Fixed template atlas for the clinical ROI mask: {ATLAS_PATH}")
+    elif SYM_MODE:
         print("  [SYM] Using symmetric-space per-patient parcellation for clinical ROI mask")
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

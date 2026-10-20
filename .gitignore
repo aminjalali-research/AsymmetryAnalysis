@@ -131,3 +131,7 @@ symreg/patient_brains/
 symreg/validation/
 symreg/logs/
 symreg/*.err
+external_chalfont/
+
+# v2 feature cache (ROI json + smoothed maps, ~700 MB; rebuild with scripts/v2/prep_subject_features.py)
+v2_features/

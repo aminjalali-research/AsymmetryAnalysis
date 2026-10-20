@@ -56,6 +56,7 @@ from src.thresholding import (
 
 assert len(METHOD_REGISTRY) == 13, "thresholding registry should expose 13 methods"
 from ez_ground_truth import DISCARDED  # patients excluded from the cohort (P014)
+import dataset_config  # --dataset {inhouse,chalfont} switch (external validation)
 
 # ============================================================================
 # CONFIGURATION
@@ -69,7 +70,8 @@ VOXEL_VOL_MM3 = 0.8 ** 3
 BASE_DIR = Path(__file__).parent
 CONTROLS_BASE_DIR = BASE_DIR / "DatasetControls"
 PATIENT_DATASET_DIR = BASE_DIR / "Dataset"
-OUTPUT_DIR = BASE_DIR / "results_zscore" / "asymmetry"
+RESULTS_DIR = BASE_DIR / "results_zscore"          # 01_build_control_normative.py outputs
+OUTPUT_DIR = RESULTS_DIR / "asymmetry"
 GROUP_KEY = "FM_20_39"
 
 # Symmetric-space mode (2026-06-22 zAI over-dispersion fix). When enabled, the
@@ -77,6 +79,38 @@ GROUP_KEY = "FM_20_39"
 # template (symreg/sym_perf/), so np.flip(axis=0) compares homologous voxels.
 SYM_MODE = False
 SYM_DIR = BASE_DIR / "symreg" / "sym_perf"
+PERF_SUFFIX = "_perf_sym"   # <ID><PERF_SUFFIX>.nii.gz in SYM_DIR (chalfont: --perf-variant)
+
+# Dataset switch (external validation); in-house config == the defaults above.
+DATASET_CFG = dataset_config.configure("inhouse")
+
+
+def _apply_dataset_config(cfg):
+    """Point the module globals at the selected dataset."""
+    global DATASET_CFG, CONTROLS_BASE_DIR, PATIENT_DATASET_DIR, RESULTS_DIR, OUTPUT_DIR
+    global SYM_DIR, SYM_MODE, PERF_SUFFIX, GROUP_DEFINITIONS
+    DATASET_CFG = cfg
+    CONTROLS_BASE_DIR = cfg.controls_base_dir
+    PATIENT_DATASET_DIR = cfg.patient_dataset_dir
+    RESULTS_DIR = cfg.output_dir
+    OUTPUT_DIR = cfg.output_dir / "asymmetry"
+    SYM_DIR = cfg.sym_dir
+    PERF_SUFFIX = cfg.perf_suffix
+    if cfg.group_definitions is not None:
+        GROUP_DEFINITIONS = cfg.group_definitions
+    if cfg.sym_mode is not None:
+        SYM_MODE = cfg.sym_mode
+
+
+def _sym_perf_path(subject_id):
+    return SYM_DIR / f"{subject_id}{PERF_SUFFIX}.nii.gz"
+
+
+def _patient_available(patient_id):
+    if SYM_MODE:
+        return _sym_perf_path(patient_id).exists()
+    return (PATIENT_DATASET_DIR / patient_id).exists()
+
 
 GROUP_DEFINITIONS = {
     "F_20_39": {"subdirs": ["20_29F", "30_39F"]},
@@ -158,7 +192,12 @@ def compute_asymmetry_map(perfusion):
     right = np.flip(left, axis=0)  # mirror across midline
 
     mean_lr = (left + right) / 2.0
-    valid = mean_lr > 0.001  # both sides must have signal
+    # Both hemispheres must carry positive CBF. Accepting a pair on the
+    # basis of its mean alone (old: mean_lr > 0.001) let voxels with one
+    # non-positive side (noise, slab edge, cavity) through with |AI| of
+    # several hundred percent, which clipped zAI to +/-20 and formed large
+    # spurious clusters (audit 2026-10-19; e.g. P027 8047 voxels, D019 9503).
+    valid = (left > 0) & (right > 0)
 
     ai = np.zeros_like(left)
     ai[valid] = 100.0 * (left[valid] - right[valid]) / mean_lr[valid]
@@ -171,9 +210,13 @@ def compute_asymmetry_map(perfusion):
 # ============================================================================
 
 def discover_subjects(group_key):
-    """Find control subject directories."""
+    """Find control subject directories (or ID-listed subjects with a perfusion map)."""
     subjects = []
-    for subdir_name in GROUP_DEFINITIONS[group_key]["subdirs"]:
+    gdef = GROUP_DEFINITIONS[group_key]
+    if gdef.get("subject_ids") is not None:
+        return [CONTROLS_BASE_DIR / sid for sid in gdef["subject_ids"]
+                if _sym_perf_path(sid).exists()]
+    for subdir_name in gdef["subdirs"]:
         subdir = CONTROLS_BASE_DIR / subdir_name
         if not subdir.exists():
             continue
@@ -186,7 +229,7 @@ def discover_subjects(group_key):
 def find_perfusion_file(subject_dir):
     """Find the upsampled MNI-space perfusion NIfTI."""
     if SYM_MODE:
-        p = SYM_DIR / f"{subject_dir.name}_perf_sym.nii.gz"
+        p = _sym_perf_path(subject_dir.name)
         if not p.exists():
             raise FileNotFoundError(f"No symmetric perfusion for {subject_dir.name}: {p}")
         return p
@@ -321,7 +364,7 @@ def build_group_asymmetry_stats(group_key, force_rebuild=False):
 
 def find_patient_perfusion(patient_dir):
     if SYM_MODE:
-        p = SYM_DIR / f"{patient_dir.name}_perf_sym.nii.gz"
+        p = _sym_perf_path(patient_dir.name)
         if not p.exists():
             raise FileNotFoundError(f"No symmetric perfusion for {patient_dir.name}: {p}")
         return p
@@ -413,8 +456,11 @@ def _classify_direction(z_perf_cluster: float, z_perf_mirror: float,
 
 def process_patient(patient_id, mean_ai, sd_ai, brain_mask, parc, gm_mask,
                     affine, threshold, min_cluster,
-                    mean_perf=None, sd_perf=None):
+                    mean_perf=None, sd_perf=None, out_subdir="patients"):
     """Compute asymmetry z-score for one patient.
+
+    ``out_subdir`` selects ``OUTPUT_DIR/<out_subdir>/<ID>/`` ("patients" by
+    default; "pseudo_controls" when controls are scored as pseudo-patients).
 
     Parameters
     ----------
@@ -428,8 +474,8 @@ def process_patient(patient_id, mean_ai, sd_ai, brain_mask, parc, gm_mask,
         (left-dominant / right-dominant) is the only side-related output.
     """
     patient_dir = PATIENT_DATASET_DIR / patient_id
-    if not patient_dir.exists():
-        print(f"  Patient not found: {patient_dir}")
+    if not _patient_available(patient_id):
+        print(f"  Patient not found: {_sym_perf_path(patient_id) if SYM_MODE else patient_dir}")
         return None
 
     perf_path = find_patient_perfusion(patient_dir)
@@ -463,7 +509,7 @@ def process_patient(patient_id, mean_ai, sd_ai, brain_mask, parc, gm_mask,
     sig_z[right_filt] = z_asym[right_filt]
 
     # Save
-    out_dir = OUTPUT_DIR / "patients" / patient_id
+    out_dir = OUTPUT_DIR / out_subdir / patient_id
     out_dir.mkdir(parents=True, exist_ok=True)
     prefix = f"{patient_id}_asymmetry"
 
@@ -596,7 +642,7 @@ def plot_montage(patient_id, sig_z, mask, mean_ai, brain_mask, out_dir, prefix):
     selected = np.linspace(z_indices[0] + 5, z_indices[-1] - 5, n_slices, dtype=int)
 
     # Use the group mean perfusion as background if available
-    mean_perf_path = BASE_DIR / "results_zscore" / "groups" / GROUP_KEY / "mean_perfusion.nii.gz"
+    mean_perf_path = RESULTS_DIR / "groups" / GROUP_KEY / "mean_perfusion.nii.gz"
     if mean_perf_path.exists():
         bg_vol = nib.load(str(mean_perf_path)).get_fdata(dtype=np.float32)
     else:
@@ -637,6 +683,177 @@ def plot_montage(patient_id, sig_z, mask, mean_ai, brain_mask, out_dir, prefix):
 
 
 # ============================================================================
+# CONTROLS AS PSEUDO-PATIENTS (specificity / false-positive analysis)
+# ============================================================================
+
+def _loo_cache_path(group_key):
+    return OUTPUT_DIR / "groups" / group_key / "loo_accumulators.npz"
+
+
+def _loo_accumulators(group_key, use_cache=True):
+    """Sum, sum-of-squares and count of the control AI maps (and of the raw
+    perfusion, as in 01_build_control_normative.py) so that leave-one-out
+    statistics can be obtained for every control by subtraction. Cached in
+    ``asymmetry/groups/<band>/loo_accumulators.npz`` so that per-control runs
+    (``--pseudo-controls --patient <ID>``) can be parallelised."""
+    cache = _loo_cache_path(group_key)
+    subjects = discover_subjects(group_key)
+    ids = [sd.name for sd in subjects]
+    if use_cache and cache.exists():
+        z = np.load(str(cache), allow_pickle=False)
+        if list(z["ids"]) == ids:
+            print(f"  Loaded cached LOO accumulators: {cache}")
+            return {k: z[k] for k in ("S", "SS", "C", "Sp", "SSp", "Cp")} | {"n": int(z["n"]), "ids": ids}, None
+        print("  Cached LOO accumulators are for a different control set; rebuilding")
+    acc = None
+    ref_img = None
+    for i, subj_dir in enumerate(subjects):
+        img = nib.load(str(find_perfusion_file(subj_dir)))
+        perf = img.get_fdata(dtype=np.float32).astype(np.float64)
+        ai, valid = compute_asymmetry_map(perf)
+        if acc is None:
+            ref_img = img
+            z = lambda dt=np.float64: np.zeros(ai.shape, dtype=dt)  # noqa: E731
+            acc = {"S": z(), "SS": z(), "C": z(np.int32),
+                   "Sp": z(), "SSp": z(), "Cp": z(np.int32), "n": 0, "ids": []}
+        acc["S"][valid] += ai[valid]
+        acc["SS"][valid] += ai[valid] ** 2
+        acc["C"][valid] += 1
+        pv = perf > 0
+        acc["Sp"][pv] += perf[pv]
+        acc["SSp"][pv] += perf[pv] ** 2
+        acc["Cp"][pv] += 1
+        acc["n"] += 1
+        acc["ids"].append(subj_dir.name)
+        print(f"  [{i+1:3d}/{len(subjects)}] {subj_dir.name} accumulated")
+    if use_cache and acc is not None:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(str(cache), ids=np.array(acc["ids"]), n=acc["n"],
+                 **{k: acc[k] for k in ("S", "SS", "C", "Sp", "SSp", "Cp")})
+        print(f"  Saved LOO accumulators -> {cache}")
+    return acc, ref_img
+
+
+def _loo_stats(S, SS, C, x, valid, n_total, sd_floor=None, mirror_pool=False, sd_min=0.0):
+    """Mean/SD over the other controls at voxels where ``valid`` (this subject
+    contributes) or not; mirrors build_group_asymmetry_stats / 01 brain mask."""
+    xv = np.where(valid, x, 0.0)
+    n = C - valid.astype(np.int32)
+    mean = np.zeros_like(S)
+    ok = n > 0
+    mean[ok] = (S[ok] - xv[ok]) / n[ok]
+    sd = np.zeros_like(S)
+    ok2 = n >= 2
+    m2 = (SS[ok2] - xv[ok2] ** 2) - n[ok2] * mean[ok2] ** 2
+    sd[ok2] = np.sqrt(np.maximum(m2, 0.0) / (n[ok2] - 1))
+    if mirror_pool:
+        sd = np.maximum(sd, np.flip(sd, axis=0))
+    if sd_floor is not None:
+        sd = np.maximum(sd, sd_floor)
+    coverage = n / max(n_total - 1, 1)
+    mask = coverage >= BRAIN_MASK_COVERAGE
+    if sd_min > 0:
+        mask &= sd > sd_min
+    mean[~mask] = 0
+    sd[~mask] = 0
+    return mean, sd, mask
+
+
+def run_pseudo_controls(group_key, force_rebuild=False, loo=True, only=None, prepare_only=False):
+    """Score every control of ``group_key`` (or just ``only``) as a pseudo-patient.
+
+    ``prepare_only`` builds the group statistics and the LOO accumulator cache
+    and exits, so that one ``--patient <control>`` run per control can then be
+    launched in parallel; ``scripts/chalfont/collect_summaries.py`` rebuilds the
+    per-band summary CSV from the per-control outputs afterwards.
+
+    With ``loo`` (default) the control is excluded from both the AI normative
+    statistics and the per-voxel perfusion statistics used for direction
+    inference; otherwise the full group statistics are used (optimistic, the
+    control is part of its own reference). Outputs:
+    ``OUTPUT_DIR/pseudo_controls/<ID>/<ID>_asymmetry_*`` (same files as patients)
+    and ``OUTPUT_DIR/pseudo_controls/<group>_pseudo_control_summary.csv``.
+    """
+    print("\n" + "=" * 70)
+    print(f"  CONTROLS AS PSEUDO-PATIENTS  group={group_key}  "
+          f"{'leave-one-out' if loo else 'FULL stats (optimistic)'}")
+    print("=" * 70)
+    mean_ai, sd_ai, brain_mask, ref_img = build_group_asymmetry_stats(
+        group_key, force_rebuild=force_rebuild)
+    affine = ref_img.affine
+    parc_path = RESULTS_DIR / "groups" / group_key / "consensus_parcellation.nii.gz"
+    if not parc_path.exists():
+        raise FileNotFoundError(f"{parc_path} missing; run 01_build_control_normative.py first")
+    parc = nib.load(str(parc_path)).get_fdata().astype(np.int32)
+    gm_mask = np.isin(parc, list(GRAY_MATTER_LABELS))
+    mean_perf_path = RESULTS_DIR / "groups" / group_key / "mean_perfusion.nii.gz"
+    sd_perf_path = RESULTS_DIR / "groups" / group_key / "sd_perfusion.nii.gz"
+    mean_perf = sd_perf = None
+    if mean_perf_path.exists() and sd_perf_path.exists():
+        mean_perf = nib.load(str(mean_perf_path)).get_fdata(dtype=np.float32)
+        sd_perf = nib.load(str(sd_perf_path)).get_fdata(dtype=np.float32)
+
+    # Score only the controls the band-assignment rule sends to this band, so a
+    # control listed in several bands (e.g. CH_ALL and its age band) is scored once.
+    to_score = set(DATASET_CFG.pseudo_control_ids(group_key))
+    if only is not None:
+        if only not in to_score:
+            raise SystemExit(f"{only} is not a control assigned to {group_key}")
+        to_score = {only}
+    subjects = [s for s in discover_subjects(group_key) if s.name in to_score]
+    print(f"  controls to score in {group_key}: {len(subjects)}")
+    acc = None
+    if loo and (subjects or prepare_only):
+        acc, _ = _loo_accumulators(group_key)
+    if prepare_only:
+        print("  --prepare-only: group statistics and LOO accumulators are ready")
+        return 0
+
+    rows = []
+    for i, subj_dir in enumerate(subjects):
+        cid = subj_dir.name
+        print(f"\n  [{i+1}/{len(subjects)}] pseudo-patient {cid}")
+        if loo:
+            perf = nib.load(str(find_perfusion_file(subj_dir))).get_fdata(dtype=np.float32).astype(np.float64)
+            ai, valid = compute_asymmetry_map(perf)
+            m_ai, s_ai, bm = _loo_stats(acc["S"], acc["SS"], acc["C"], ai, valid, acc["n"],
+                                        sd_floor=5.0, mirror_pool=True)
+            m_p, s_p, _ = _loo_stats(acc["Sp"], acc["SSp"], acc["Cp"], perf, perf > 0, acc["n"],
+                                     sd_min=1e-6)
+            res = process_patient(cid, m_ai.astype(np.float32), s_ai.astype(np.float32), bm,
+                                  parc, gm_mask, affine, ZSCORE_THRESHOLD, MIN_CLUSTER_SIZE,
+                                  mean_perf=m_p.astype(np.float32), sd_perf=s_p.astype(np.float32),
+                                  out_subdir="pseudo_controls")
+        else:
+            res = process_patient(cid, mean_ai, sd_ai, brain_mask, parc, gm_mask, affine,
+                                  ZSCORE_THRESHOLD, MIN_CLUSTER_SIZE,
+                                  mean_perf=mean_perf, sd_perf=sd_perf,
+                                  out_subdir="pseudo_controls")
+        if res is None:
+            continue
+        summary, _ = res
+        summary["group"] = group_key
+        summary["leave_one_out"] = bool(loo)
+        rows.append(summary)
+        with open(OUTPUT_DIR / "pseudo_controls" / cid / f"{cid}_pseudo_control_meta.json", "w") as f:
+            json.dump({"group": group_key, "leave_one_out": bool(loo)}, f)
+        print(f"    valid GM voxels {summary['valid_gm_voxels']:,}; abnormal "
+              f"{summary['pct_abnormal_asymmetry']:.1f}%; clusters L/R "
+              f"{summary['left_dominant_clusters']}/{summary['right_dominant_clusters']}")
+    out_csv = OUTPUT_DIR / "pseudo_controls" / f"{group_key}_pseudo_control_summary.csv"
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    if only is not None:
+        print("  (single control: run scripts/chalfont/collect_summaries.py for the band summary CSV)")
+    elif rows:
+        pd.DataFrame(rows).to_csv(out_csv, index=False)
+        print(f"\n  Pseudo-control summary -> {out_csv}")
+    else:
+        out_csv.unlink(missing_ok=True)
+        print(f"\n  No controls assigned to {group_key} for the pseudo-control pass (nothing written)")
+    return 0
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -653,15 +870,41 @@ def main():
     parser.add_argument("--sym", action="store_true",
                         help="Use symmetric-template-registered perfusion (symreg/sym_perf/) "
                              "so the mirror-AI compares homologous voxels (zAI over-dispersion fix).")
+    parser.add_argument("--pseudo-controls", action="store_true",
+                        help="Score every control of --group as a pseudo-patient (control "
+                             "false-positive analysis). Outputs go to asymmetry/pseudo_controls/. "
+                             "By default each control is excluded from its own normative "
+                             "statistics (leave-one-out); see --no-loo.")
+    parser.add_argument("--no-loo", action="store_true",
+                        help="With --pseudo-controls: use the full (optimistic) group statistics.")
+    parser.add_argument("--prepare-only", action="store_true",
+                        help="With --pseudo-controls: build the group statistics and the LOO "
+                             "accumulator cache only (then run --pseudo-controls --patient <ID> in parallel).")
+    parser.add_argument("--group-only", action="store_true",
+                        help="Build/load the asymmetry group statistics only (no patients).")
+    dataset_config.add_dataset_args(parser)
     args = parser.parse_args()
 
     ZSCORE_THRESHOLD = args.threshold
     MIN_CLUSTER_SIZE = args.min_cluster
-    group_key = args.group
-    GROUP_KEY = group_key  # used by plot_montage for the band's background
     SYM_MODE = args.sym
+    _apply_dataset_config(dataset_config.configure(args.dataset, perf_variant=args.perf_variant, band_policy=args.band_policy))
+    group_key = args.group
+    if not DATASET_CFG.is_inhouse and group_key not in GROUP_DEFINITIONS:
+        avail = DATASET_CFG.available_groups()
+        if args.group == "FM_20_39" and avail:   # default band name is in-house only
+            group_key = avail[0]
+        else:
+            raise SystemExit(f"Unknown group '{group_key}' for dataset {DATASET_CFG.name}; "
+                             f"available: {avail}")
+    GROUP_KEY = group_key  # used by plot_montage for the band's background
+    if not DATASET_CFG.is_inhouse:
+        print(f"  [DATASET] {DATASET_CFG.summary()}")
     if SYM_MODE:
-        print("  [SYM] Using symmetric-template-registered perfusion from symreg/sym_perf/")
+        print(f"  [SYM] Using symmetric-template-registered perfusion from {SYM_DIR}/")
+    if args.pseudo_controls:
+        return run_pseudo_controls(group_key, force_rebuild=args.rebuild, loo=not args.no_loo,
+                                   only=args.patient, prepare_only=args.prepare_only)
 
     print("\n" + "=" * 70)
     print("  CONTROL-REFERENCED ASYMMETRY Z-SCORE ANALYSIS")
@@ -679,8 +922,8 @@ def main():
     # Load per-voxel control perfusion mean/SD for direction-of-abnormality
     # inference (computed by 01_build_control_normative.py). When these
     # files are missing, we fall back to the legacy direction column only.
-    mean_perf_path = BASE_DIR / "results_zscore" / "groups" / group_key / "mean_perfusion.nii.gz"
-    sd_perf_path = BASE_DIR / "results_zscore" / "groups" / group_key / "sd_perfusion.nii.gz"
+    mean_perf_path = RESULTS_DIR / "groups" / group_key / "mean_perfusion.nii.gz"
+    sd_perf_path = RESULTS_DIR / "groups" / group_key / "sd_perfusion.nii.gz"
     if mean_perf_path.exists() and sd_perf_path.exists():
         mean_perf = nib.load(str(mean_perf_path)).get_fdata(dtype=np.float32)
         sd_perf = nib.load(str(sd_perf_path)).get_fdata(dtype=np.float32)
@@ -693,7 +936,7 @@ def main():
               f"{mean_perf_path.parent}; direction inference will be skipped.")
 
     # Load consensus parcellation for region mapping
-    parc_path = BASE_DIR / "results_zscore" / "groups" / group_key / "consensus_parcellation.nii.gz"
+    parc_path = RESULTS_DIR / "groups" / group_key / "consensus_parcellation.nii.gz"
     if parc_path.exists():
         parc = nib.load(str(parc_path)).get_fdata().astype(np.int32)
     else:
@@ -706,8 +949,14 @@ def main():
         gm_mask |= (parc == label)
 
     # Find patients
-    if args.patient:
+    if args.group_only:
+        patients = []
+    elif args.patient:
         patients = [args.patient]
+    elif not DATASET_CFG.is_inhouse:
+        # ID-list discovery (subjects.csv): discrete + negative patients with a
+        # registered perfusion, matched to this band on age_at_scan.
+        patients = DATASET_CFG.patients_for_group(group_key)
     else:
         # Use demographics to find matching patients
         spreadsheet = BASE_DIR / "clinical_spreadsheet.xlsx"
@@ -772,7 +1021,7 @@ def main():
 
     # FSLeyes commands
     if all_summaries:
-        mean_perf = BASE_DIR / "results_zscore" / "groups" / group_key / "mean_perfusion.nii.gz"
+        mean_perf = RESULTS_DIR / "groups" / group_key / "mean_perfusion.nii.gz"
         print(f"\n{'='*70}")
         print("  FSLeyes commands")
         print(f"{'='*70}")
