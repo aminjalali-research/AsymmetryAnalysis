@@ -116,7 +116,7 @@ seven signed indices are first-order equivalent (identical AUC 0.500).
 
 M1 fixed |z|≥1.64, M2 quality+percentile, M3 FDR, M4 Bonferroni, M5 TFCE (95th percentile of positive TFCE,
 no permutation), M6 GRF, M7 permutation (200), M8 GMM, M9 Otsu, M10 random 3%, **M11 quality+TFCE (default)**,
-M12 quality+GMM, M13 quality+Otsu. Mean coverage of the non-zero zAI region (n=17): M3 32%, M4 3.1%, M7 1.6% (P021 none), M11 4.6%; M8 degenerate in P025.
+M12 quality+GMM, M13 quality+Otsu. Mean coverage of the non-zero zAI region (n=17, after the 2026-10-20 validity-rule rerun): M3 32.6%, M4 3.1%, M7 1.6% (now 2–13 clusters in every patient), M11 4.7%; M8 13.5% (no longer degenerate in P025).
 Comparison is coverage only, not accuracy (no voxel-wise ground truth).
 
 ## How to run
