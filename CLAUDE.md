@@ -39,6 +39,12 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   never add a reference without a PMID/DOI check. Old NeuroImage:Clinical version in `manuscript/_archive/`.
   Ethics: Queen's HSREB DMED-2472-21. Funding: SEAMO SEA-24-011.
   Open (authors): co-author approval of CRediT roles; name of the person who assigned MDT certainty grades.
+- **Manuscript state (2026-10-20):** 33 pages; Figs 1–5 + Appendix B (workflow figure, file table, Algorithms 1–5) + Appendix C
+  (z-map montages S1a/S1b/S2, `case_montage` in `scripts/make_manuscript_figures.py`, 3× upsampled, PDF includes); notation
+  section (`sec:notation`); multi-metric table (`tab:enhanced`), method comparison (`tab:method_comparison`), external rule
+  grid (`tab:rules_external`), noise budget, demographics; references pruned to cited PMID/DOI-verified entries. Deck:
+  `AsymmetryAnalysis.pptx` (21 slides incl. neurologist questions 18–20; build script in the session scratchpad; original
+  kept as `AsymmetryAnalysis_backup_20261020.pptx`).
 - **Never push** `manuscript/`, `docs/manuscript/`, `docs/superpowers/` (private).
 
 ## Key directories
