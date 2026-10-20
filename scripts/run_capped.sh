@@ -30,7 +30,7 @@ UNIT="${NAME}-$(date +%Y%m%d_%H%M%S)"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 export FSLOUTPUTTYPE="${FSLOUTPUTTYPE:-NIFTI_GZ}"
 systemd-run --user --scope --quiet --unit="$UNIT" \
-  -p MemoryMax="$MAX" -p MemorySwapMax=0 \
+  -p MemoryMax="$MAX" -p MemorySwapMax=0 -p OOMPolicy=continue \
   setsid nohup nice -n 10 ionice -c 2 -n 7 "$@" > "$LOGFILE" 2>&1 < /dev/null &
 disown
 echo "launched unit=${UNIT}.scope MemoryMax=${MAX} log=${LOGFILE}"

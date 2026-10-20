@@ -111,6 +111,16 @@ Majority baseline 0.54. The regional temporal sign rule beats the majority basel
 
 **Reading.** The large same-scanner dataset shows a modest, reproducible lateralizing signal (≈ 0.65 balanced accuracy, ≈ 92 % precision when a calibrated call is made) that the 13-patient in-house sample cannot resolve. The failure in the paper is therefore both: the voxel-wise method as implemented has no sensitivity to realistic effect sizes and no calibration, and the in-house sample is too small to measure a 0.65-vs-0.54 difference. See Section 7 for the as-implemented method on Chalfont.
 
+## 5b. Multi-metric view (clinician's lens)
+
+`scripts/v2/multimetric_comparison.py` → `ez_analysis_mdt/v2/<dataset>/multimetric_comparison.csv`. For every method: call rate, PPV of calls, sensitivity per side (no-call = miss), balanced accuracy, AUC with bootstrap CI, LR+, κ, control FP rate, strata. No single metric ranks methods; the call-rate × PPV Pareto front is reported.
+
+Chalfont Pareto front: regional temporal z̄ always calling (call 1.00, PPV 0.66, AUC 0.69, LR+ 1.9, MRI-negative 32/47) → voxel rule strong+moderate (0.71, 0.68) → voxel rule strong only (0.22, 0.80, LR+ 4) → regional all-37 calibrated (0.16, 0.87, LR+ 6.5) → regional temporal calibrated (0.14, 0.92, LR+ 12, κ 0.85) → smoothed voxel calibrated (0.09, 1.00).
+
+What one metric hides: "always majority side" reaches raw agreement 0.54 with sensitivity 1.00/0.00; the mesial statistic matches the temporal one on balanced accuracy (0.64 vs 0.65) but has the lowest AUC (0.63) and the worst calibrated calls (7/12, PPV 0.58), so it is dominated at every operating point; the voxel rule's moderate calls add coverage (0.71) without precision (0.68) and a worse right-sided sensitivity (0.42). In-house (n = 13) every always-calling method gives 7–9/13 and calibrated calls are 0–2, so the in-house cohort cannot rank methods at all.
+
+**Recommendation.** Report the regional temporal statistic at two operating points: the continuous value with the control range (coverage) and the calibrated call (precision), never the mesial-only statistic alone, and always with the control FP rate and per-side sensitivity.
+
 ## 6. Independent code review (fresh agent, read-only; items marked ✔ were re-verified in the code by me)
 
 Critical / major:
@@ -129,9 +139,19 @@ Minor:
 11. Pipeline A: orientation chosen in-sample and the bootstrap CI does not re-select it; the 0/13 LOOCV of two scores is the anti-learning artefact of a null signal; `cohen_d_directional` standardizes by between-ROI variance (not an asymmetry effect size); `build_comprehensive_asymmetry.py` includes zero-perfusion voxels in regional means and uses original-space data with the patient's own parcellation.
 12. Clusters are labelled with the control consensus parcellation while step 03 masks with the patient's own parcellation (P024's cavity is labelled "R-temporal" by control anatomy).
 
-## 7. Chalfont external run (same-scanner controls, n = 99 patients / 66 controls)
+## 7. As-implemented method on Chalfont (pre-specified primary endpoint)
 
-PENDING: primary endpoint, control false-positive rate, cluster burden in pseudo-controls.
+Stages 0–4 completed 2026-10-20 12:30 (`external_chalfont/results_zscore/clinical/cohort_concordance.csv`); the pseudo-control stage is being rerun at 2 jobs after a cgroup OOM kill.
+
+| Quantity | Value |
+|---|---|
+| Calibration, GM % with \|zAI\| ≥ 1.96 | LOO controls 6.1 % (median 4.5 %); patients 9.6 % (median 7.5 %) |
+| Primary rule, clinical tier, 93 unilateral (43 L / 50 R) | 58/93 agree (62 %), balanced accuracy 0.63, majority 0.54, binomial p = 0.06 |
+| Calls | 48 L, 40 R, 5 bilateral; strong 16/20, moderate 29/46, weak 13/22 |
+| Strata | lesional 32/46 (0.69); MRI-negative 26/47 (0.55); temporal 33/49 (0.67); frontal 10/21 (0.47); resected 8/12 (0.67) |
+| Control false-positive call rate | pending (pseudo-controls) |
+
+**Reading.** On same-scanner data with n = 93 the as-implemented rule shows a weak signal (0.63) and the enhanced regional statistic a slightly stronger one (0.65) with far better precision when calibrated (12/13 vs strong calls 16/20). The in-house negative result was therefore mostly the sample and the off-site controls; the method's defects (Sections 3.1–3.3) cap what any voxel-wise cluster rule can deliver and explain why its calls cannot be trusted individually.
 
 ## 8. Recommended redesign, in order of expected gain
 

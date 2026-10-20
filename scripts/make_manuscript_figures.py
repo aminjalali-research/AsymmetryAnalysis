@@ -284,8 +284,69 @@ def fig3_cases(cases):
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------
+def fig4_enhanced():
+    """Fig. 4: calibrated regional normative statistic (mean z of LI over the temporal
+    pairs) per patient, by reference side, for the Chalfont and in-house cohorts, with
+    the leave-one-out control distribution and the calibrated call threshold
+    (95th percentile of |statistic| in controls). Data: ez_analysis_mdt/v2/<dataset>/."""
+    plt.rcParams.update({"font.family": ["Liberation Sans", "DejaVu Sans"]})
+    V2 = BASE / "ez_analysis_mdt/v2"
+    COL = {"L": "#2b6cb0", "R": "#c05621"}; MARK = {"L": "o", "R": "s"}
+    INK, MUTED = "#1f1f1f", "#6b6b6b"
+    fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.3), gridspec_kw={"width_ratios": [2.4, 1]})
+    for ax, (ds, title) in zip(axes, [("chalfont", "Chalfont: 93 unilateral patients, 66 same-scanner controls"),
+                                      ("inhouse", "In-house: 13 patients, HCP controls")]):
+        pat = pd.read_csv(V2 / ds / "R_patients.csv"); loo = pd.read_csv(V2 / ds / "R_loo_controls.csv")
+        summ = pd.read_csv(V2 / ds / "summary.csv").set_index("statistic")
+        thr = float(summ.loc["R_temporal", "threshold"])
+        pat = pat[pat.ez.isin(["L", "R"])]
+        rng = np.random.default_rng(0)
+        rows = [("controls\n(leave-one-out)", loo["R_temporal"].values, None),
+                ("reference R", pat[pat.ez == "R"]["R_temporal"].values, "R"),
+                ("reference L", pat[pat.ez == "L"]["R_temporal"].values, "L")]
+        for y, (lab, vals, side) in enumerate(rows):
+            jit = rng.uniform(-0.18, 0.18, len(vals))
+            if side is None:
+                ax.scatter(vals, y + jit, s=9, color="#9a9a9a", alpha=0.7, linewidths=0, zorder=2)
+            else:
+                ax.scatter(vals, y + jit, s=16, color=COL[side], marker=MARK[side], alpha=0.85,
+                           linewidths=0.4, edgecolors="white", zorder=3)
+                ok = (vals < 0) if side == "L" else (vals > 0)
+                called = np.abs(vals) >= thr; okc = ok & called
+                ax.text(5.05, y, f"{ok.sum()}/{len(vals)} by sign\n{okc.sum()}/{called.sum()} called",
+                        fontsize=6.3, color=INK, va="center", ha="left")
+        ax.axvline(0, color="#bdbdbd", lw=0.8, zorder=1)
+        for t in (-thr, thr):
+            ax.axvline(t, color=INK, lw=0.8, ls=(0, (3, 2)), zorder=1)
+        ax.axvspan(-thr, thr, color="#f0f0f0", zorder=0)
+        ax.set_yticks(range(3)); ax.set_yticklabels([r[0] for r in rows], fontsize=7)
+        ax.set_xlim(-5, 5); ax.set_ylim(-0.6, 2.6)
+        ax.set_xlabel("regional temporal statistic  $\\bar{z}_{\\mathrm{temporal}}$  (control SD units)", fontsize=7)
+        ax.set_title(title, fontsize=7.2, loc="left", color=INK, pad=4)
+        ax.tick_params(labelsize=6.5, length=2, color="#9a9a9a")
+        for sp in ("top", "right"): ax.spines[sp].set_visible(False)
+        for sp in ("left", "bottom"): ax.spines[sp].set_color("#9a9a9a")
+        ax.text(-thr - 0.1, 2.55, f"call threshold \u00b1{thr:.2f}\n(95th pct. of controls)", fontsize=6, color=MUTED, ha="right", va="top")
+        if ds == "chalfont":
+            ax.text(-4.9, -0.5, "\u2190 left lower (predicts left EZ)", fontsize=6, color=MUTED, ha="left")
+            ax.text(4.9, -0.5, "right lower (predicts right EZ) \u2192", fontsize=6, color=MUTED, ha="right")
+        else:
+            ax.text(-4.9, -0.5, "\u2190 left lower", fontsize=6, color=MUTED, ha="left")
+            ax.text(4.9, -0.5, "right lower \u2192", fontsize=6, color=MUTED, ha="right")
+    h = [plt.Line2D([], [], marker="o", color=COL["L"], ls="", ms=4, label="reference side left"),
+         plt.Line2D([], [], marker="s", color=COL["R"], ls="", ms=4, label="reference side right"),
+         plt.Line2D([], [], marker="o", color="#9a9a9a", ls="", ms=3, label="healthy control")]
+    fig.legend(handles=h, fontsize=6.3, frameon=False, loc="lower center", bbox_to_anchor=(0.5, -0.01), ncol=3, handletextpad=0.3, columnspacing=1.4)
+    plt.tight_layout(w_pad=1.5, rect=(0, 0.05, 1, 1))
+    fig.savefig(FIG / "fig4_enhanced_estimator.png", dpi=300, bbox_inches="tight")
+    fig.savefig(FIG / "fig4_enhanced_estimator.pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     fig1_schematic()
+    fig4_enhanced()
     fig2_calibration()
     fig3_cases([("P029", "left TLE\nhyperperfusion, concordant"),
                 ("P016", "right TLE, MRI-negative\nhypoperfusion, concordant"),
