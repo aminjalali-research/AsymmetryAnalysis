@@ -16,8 +16,8 @@ leave-one-out (LOO) controls so that the false-positive call rate is known:
      mirror-symmetric grid; z vs controls (Welford, LOO for controls); scope = symmetrised
      37-ROI gray matter.  Hypoperfusion mass per hemisphere at |z| >= t:
      M_hypo(L) = sum_{v in L, z(v) <= -t} |z(v)| (each mirrored pair counted once by
-     construction), lateralization index LI_V = (M_L - M_R)/(M_L + M_R), predict the
-     side with the larger hypoperfused mass; temporal-scope variant.
+     construction), lateralization index LI_M = (M_R - M_L)/(M_L + M_R) (negative = left
+     carries more hypoperfused mass), predict the side with the larger mass; temporal variant.
 
 Calibration: for every statistic the LOO-control |stat| 95th percentile is the call
 threshold; a patient below it gets "no call" (counted as wrong in balanced accuracy,
@@ -239,17 +239,24 @@ def main():
         ok = C >= 10; m = np.where(ok, S / np.maximum(C, 1), 0); var = np.where(ok, SS / np.maximum(C, 1) - m ** 2, 0)
         var = var * C / np.maximum(C - 1, 1); sd = np.sqrt(np.maximum(var, 0)); sd = np.maximum(sd, np.maximum(sd, np.flip(sd, 0)))
         z = np.zeros_like(ai); good = ok & v & (sd > 1e-6); z[good] = (ai[good] - m[good]) / sd[good]; return np.clip(z, -20, 20), good
-    left = np.zeros(acc[bands[0]]["S"].shape, bool); left[: left.shape[0] // 2] = True  # axis 0 index < centre = x < 0 = left (RAS)
+    # Hemisphere masks. The symmetric template affine has a NEGATIVE x step (index 0 = x = +90 mm = right),
+    # verified against the parcellation labels (left cortex 1000-1035 lies at indices >= centre), so the
+    # LEFT hemisphere is the upper half of axis 0 on the subsampled grid as well.
+    nx0 = acc[bands[0]]["S"].shape[0]
+    left = np.zeros(acc[bands[0]]["S"].shape, bool); left[nx0 // 2 + 1:] = True
+    right = np.zeros_like(left); right[: nx0 // 2] = True
     def masses(z, good, b, t, scope):
         m = good & scope
-        hypoL = float(np.abs(z[m & left & (z <= -t)]).sum()); hypoR = float(np.abs(z[m & ~left & (z <= -t)]).sum())
+        hypoL = float(np.abs(z[m & left & (z <= -t)]).sum()); hypoR = float(np.abs(z[m & right & (z <= -t)]).sum())
         return hypoL, hypoR
     def vstats(z, good, b):
         row = {}
         for t in a.t:
             for nm, sc in (("all", acc[b]["scope"]), ("temporal", acc[b]["tscope"])):
                 hl, hr = masses(z, good, b, t, sc)
-                row[f"V_{nm}_t{t:g}"] = (hl - hr) / (hl + hr) if (hl + hr) > 0 else 0.0   # <0: left mass larger -> left hypo -> predict L
+                # LI_M = (M_R - M_L)/(M_L + M_R): negative when the LEFT hemisphere carries the larger
+                # hypoperfused z-mass (left lower than right) -> predict a left EZ, like the sign of LI.
+                row[f"V_{nm}_t{t:g}"] = (hr - hl) / (hl + hr) if (hl + hr) > 0 else 0.0
                 row[f"V_{nm}_t{t:g}_massL"], row[f"V_{nm}_t{t:g}_massR"] = hl, hr
         gm = good & acc[b]["scope"]; row["V_frac_gm_abs_z_ge_1.96"] = float((np.abs(z[gm]) >= 1.96).mean()) if gm.any() else np.nan
         return row

@@ -229,6 +229,8 @@ def cluster_class_volume(pid: str, peak=4.0, size=100):
 
 
 def fig3_cases(cases):
+    # NOTE (2026-10-20): the symmetric template affine has a negative x step (index 0 = x = +90 mm, right
+    # hemisphere); axis 0 is reversed for display so that image-left = left hemisphere (neurological).
     t1 = nib.load(str(T1)).get_fdata()
     t1 = t1 / np.percentile(t1[t1 > 0], 99)
     n = len(cases)
@@ -252,10 +254,10 @@ def fig3_cases(cases):
             zs.append(zs[-1] + 10 if zs else 110)
         for col, z in enumerate(zs):
             ax = axes[row, col]
-            ax.imshow(t1[:, :, z].T, cmap="gray", origin="lower", vmin=0, vmax=1)
-            rgba = np.zeros(vol[:, :, z].T.shape + (4,))
+            ax.imshow(t1[::-1, :, z].T, cmap="gray", origin="lower", vmin=0, vmax=1)
+            rgba = np.zeros(vol[::-1, :, z].T.shape + (4,))
             for cls, colr in cmap.items():
-                m = vol[:, :, z].T == cls
+                m = vol[::-1, :, z].T == cls
                 rgba[m] = matplotlib.colors.to_rgba(colr, alpha=0.85)
             ax.imshow(rgba, origin="lower", interpolation="nearest")
             ax.set_title(f"z = {z}", fontsize=7, pad=2)
@@ -264,10 +266,10 @@ def fig3_cases(cases):
         com = ndimage.center_of_mass(lab == order[0] + 1) if k else (113, 136, 113)
         y = int(round(com[1]))
         ax = axes[row, 3]
-        ax.imshow(t1[:, y, :].T, cmap="gray", origin="lower", vmin=0, vmax=1)
-        rgba = np.zeros(vol[:, y, :].T.shape + (4,))
+        ax.imshow(t1[::-1, y, :].T, cmap="gray", origin="lower", vmin=0, vmax=1)
+        rgba = np.zeros(vol[::-1, y, :].T.shape + (4,))
         for cls, colr in cmap.items():
-            m = vol[:, y, :].T == cls
+            m = vol[::-1, y, :].T == cls
             rgba[m] = matplotlib.colors.to_rgba(colr, alpha=0.85)
         ax.imshow(rgba, origin="lower", interpolation="nearest")
         ax.set_title(f"coronal y = {y}", fontsize=7, pad=2); ax.axis("off")
