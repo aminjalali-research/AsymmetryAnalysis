@@ -126,7 +126,7 @@ def main():
     Xc = np.array([np.nan_to_num(Zc[c]) for c in sum(ctrl.values(), [])])
     # ---- baseline: temporal mean z (no training) ----------------------------------
     tcols = [i for i, c in enumerate(cols) if c.startswith("li_") and c[3:] in TEMPORAL]
-    base_score = X[:, tcols].mean(axis=1)            # negative = left lower -> left EZ ; sign(+) = right
+    base_score = X[:, tcols].mean(axis=1) if tcols else np.full(len(uni), np.nan)   # negative = left lower -> left EZ
     # ---- leave-one-out antisymmetric logistic regression ---------------------------
     scores = np.zeros(len(uni)); Cs = []
     for i in range(len(uni)):

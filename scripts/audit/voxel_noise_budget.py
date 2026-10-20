@@ -18,7 +18,7 @@ def rep(name,m):
     v=sd[m]; q=np.percentile(v,[10,25,50,75,90]); print(f"{name:14} n={m.sum():9,} SD%AI p10/25/50/75/90 = {q.round(1)}  at_floor(5%)={100*(v<=5.001).mean():.1f}%  |AI| for z=4 (median) = {4*q[2]:.0f}%  |mean AI| median={np.median(np.abs(meanai[m])):.1f}%")
 for n,m in [('brain',bm),('GM(37ROI)',gm),('hippocampus',hip),('amygdala',amy),('temporal ctx',temp)]: rep(n,m)
 # smoothing experiment: 20 controls, Welford on AI from unsmoothed vs 6-mm smoothed perfusion
-ids=meta['subject_ids'][:20]; sig=6/2.3548/0.8
+import sys as _s; FW=float(_s.argv[1]) if len(_s.argv)>1 else 6.0; ids=meta["subject_ids"][:20]; sig=FW/2.3548/0.8
 acc={k:[np.zeros(sd.shape,np.float64),np.zeros(sd.shape,np.float64),np.zeros(sd.shape,np.int32)] for k in ('raw','sm6')}
 def ai_of(p):
     L=p.astype(np.float64); R=np.flip(L,0); v=(L>0)&(R>0); ai=np.zeros_like(L); ai[v]=100*(L[v]-R[v])/((L[v]+R[v])/2); return ai,v

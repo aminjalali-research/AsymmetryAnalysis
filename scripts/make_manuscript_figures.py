@@ -190,15 +190,18 @@ def fig2_calibration():
 
 
 # --------------------------------------------------------------------------
-def cluster_class_volume(pid: str, peak=4.0, size=100):
-    """Rebuild a label volume: 1 = hypo, 2 = hyper, 3 = subtle/mixed, for in-scope clusters at the tier."""
-    d = PAT / pid
+def cluster_class_volume(pid: str, peak=4.0, size=100, root: Path | None = None):
+    """Rebuild (class volume, z volume) for in-scope clusters at the tier, one member per mirrored
+    pair (the member in the hemisphere assigned by the direction rule). class: 1 = hypo, 2 = hyper,
+    3 = subtle/mixed; z = z_AI at those voxels (signed). root = .../results_zscore/asymmetry/patients."""
+    d = (root or PAT) / pid
     rep = pd.read_csv(d / f"{pid}_asymmetry_cluster_report.csv")
     normed = rep["primary_region"].apply(ci._normalize_region)
     rep["canon"] = normed.apply(lambda t: t[1])
     rep["in_scope"] = rep["canon"].apply(lambda n: bool(n) and n in ci.CLINICAL_NAMES)
     struct = get_structure_3d()
-    out = None
+    zmap = nib.load(str(d / f"{pid}_asymmetry_zscore.nii.gz")).get_fdata(dtype=np.float32)
+    out = None; zout = np.zeros(zmap.shape, np.float32)
     for direction, fname in (("left-dominant", "left_dominant"), ("right-dominant", "right_dominant")):
         img = nib.load(str(d / f"{pid}_asymmetry_{fname}.nii.gz"))
         mask = img.get_fdata() > 0
@@ -208,82 +211,85 @@ def cluster_class_volume(pid: str, peak=4.0, size=100):
         sub = rep[rep.direction == direction].set_index("cluster_id")
         sizes = ndimage.sum(mask, lab, range(1, n + 1))
         cid = 0
-        for i, s in enumerate(sizes, 1):
-            if s < 50:
+        for i, sz in enumerate(sizes, 1):
+            if sz < 50:
                 continue
             cid += 1
             if cid not in sub.index:
                 continue
             r = sub.loc[cid]
-            assert int(r.size_voxels) == int(s), (pid, direction, cid, r.size_voxels, s)
-            if abs(r.peak_z) < peak or s < size or not r.in_scope:
+            if abs(r.peak_z) < peak or sz < size or not r.in_scope:
                 continue
-            # The asymmetry map is antisymmetric, so every finding appears as a
-            # mirrored pair of clusters; draw only the member that lies in the
-            # hemisphere the direction inference assigns the abnormality to.
             if str(r.cluster_hemi) != str(r.ez_side_pred):
                 continue
             cls = {"hypo": 1, "hyper": 2}.get(r.direction_class, 3)
-            out[lab == i] = cls
-    return out, rep
+            m = lab == i
+            out[m] = cls; zout[m] = zmap[m]
+    return out, zout, rep
+
+
+def case_montage(cases, out_name, root: Path | None = None, z_mm=(-24, -12, 0, 12, 30), y_mm=-20,
+                 zmax=8.0, title=None):
+    """Lightbox montage in the style of PET/ASL z-map papers: axial slices at fixed MNI z (mm) plus one
+    coronal slice through the hippocampi, T1 background, the signed z_AI of surviving clinical-tier
+    clusters shown as a continuous colour (cool = hypoperfused side, warm = hyperperfused side,
+    grey = subtle), colour bars, L/R markers, neurological orientation (image left = left hemisphere).
+    cases: list of (patient_id, row_label)."""
+    plt.rcParams.update({"font.family": ["Liberation Sans", "DejaVu Sans"]})
+    img = nib.load(str(T1)); aff = img.affine; t1 = img.get_fdata(); t1 = t1 / np.percentile(t1[t1 > 0], 99)
+    inv = np.linalg.inv(aff)
+    def idx(xyz):
+        return np.round(inv @ np.array([*xyz, 1]))[:3].astype(int)
+    zi = [int(idx((0, 0, z))[2]) for z in z_mm]; yi = int(idx((0, y_mm, 0))[1])
+    n = len(cases); ncol = len(z_mm) + 1
+    fig = plt.figure(figsize=(7.2, 1.42 * n + 0.75))
+    gs = fig.add_gridspec(n, ncol, left=0.075, right=0.90, top=0.95 if title is None else 0.92, bottom=0.07, wspace=0.03, hspace=0.06)
+    cool = plt.get_cmap("Blues"); warm = plt.get_cmap("Reds")
+    def rgba_of(cls2d, z2d):
+        rgba = np.zeros(cls2d.shape + (4,))
+        a = np.clip((np.abs(z2d) - 3.0) / (zmax - 3.0), 0.25, 1.0)      # colour intensity from |z| 3 .. zmax
+        m1, m2, m3 = cls2d == 1, cls2d == 2, cls2d == 3
+        rgba[m1] = cool(0.45 + 0.55 * a[m1]); rgba[m2] = warm(0.45 + 0.55 * a[m2]); rgba[m3] = (0.6, 0.6, 0.6, 1)
+        rgba[..., 3] = (cls2d > 0).astype(float)
+        return rgba
+    for r, (pid, label) in enumerate(cases):
+        vol, zv, _ = cluster_class_volume(pid, root=root)
+        for c in range(ncol):
+            ax = fig.add_subplot(gs[r, c])
+            if c < len(z_mm):
+                bg = t1[::-1, :, zi[c]].T; cl = vol[::-1, :, zi[c]].T; zz = zv[::-1, :, zi[c]].T
+            else:
+                bg = t1[::-1, yi, :].T; cl = vol[::-1, yi, :].T; zz = zv[::-1, yi, :].T
+            ax.imshow(bg, cmap="gray", origin="lower", vmin=0, vmax=1, interpolation="bilinear")
+            ax.imshow(rgba_of(cl, zz), origin="lower", interpolation="nearest")
+            ax.set_facecolor("black"); ax.set_xticks([]); ax.set_yticks([])
+            for sp in ax.spines.values(): sp.set_visible(False)
+            if r == 0:
+                ax.set_title(f"z = {z_mm[c]:+d} mm" if c < len(z_mm) else f"y = {y_mm:+d} mm", fontsize=6.5, pad=2)
+            ax.text(0.03, 0.04, "L", color="white", fontsize=6, transform=ax.transAxes, ha="left", va="bottom")
+            ax.text(0.97, 0.04, "R", color="white", fontsize=6, transform=ax.transAxes, ha="right", va="bottom")
+            if c == 0:
+                ax.text(-0.06, 0.5, label, transform=ax.transAxes, rotation=90, ha="right", va="center", fontsize=6.3)
+    # colour bars
+    import matplotlib as mpl
+    cax1 = fig.add_axes([0.915, 0.55, 0.012, 0.32]); cax2 = fig.add_axes([0.915, 0.12, 0.012, 0.32])
+    mpl.colorbar.ColorbarBase(cax1, cmap=mpl.colors.ListedColormap(warm(np.linspace(0.45, 1.0, 64))), norm=mpl.colors.Normalize(3, zmax), orientation="vertical")
+    mpl.colorbar.ColorbarBase(cax2, cmap=mpl.colors.ListedColormap(cool(np.linspace(0.45, 1.0, 64))), norm=mpl.colors.Normalize(3, zmax), orientation="vertical")
+    cax1.set_title("hyper\n$|z_{\\mathrm{AI}}|$", fontsize=5.8, pad=3); cax2.set_title("hypo\n$|z_{\\mathrm{AI}}|$", fontsize=5.8, pad=3)
+    for cax in (cax1, cax2):
+        cax.tick_params(labelsize=5.5, length=2)
+    fig.text(0.5, 0.015, "Neurological convention (image left = left hemisphere); clinical tier (peak $|z_{\\mathrm{AI}}| \\geq 4$, $\\geq$ 100 voxels, 37 region pairs); one member per mirrored pair, drawn in the hemisphere assigned by the direction rule; grey = subtle",
+             ha="center", fontsize=5.8, color="#444444")
+    if title:
+        fig.suptitle(title, fontsize=8, y=0.985)
+    fig.savefig(FIG / f"{out_name}.png", dpi=300, bbox_inches="tight")
+    fig.savefig(FIG / f"{out_name}.pdf", bbox_inches="tight")
+    plt.close(fig)
 
 
 def fig3_cases(cases):
-    # NOTE (2026-10-20): the symmetric template affine has a negative x step (index 0 = x = +90 mm, right
-    # hemisphere); axis 0 is reversed for display so that image-left = left hemisphere (neurological).
-    t1 = nib.load(str(T1)).get_fdata()
-    t1 = t1 / np.percentile(t1[t1 > 0], 99)
-    n = len(cases)
-    fig, axes = plt.subplots(n, 4, figsize=(7.2, 1.9 * n))
-    cmap = {1: "#1f77e0", 2: "#d62728", 3: "#999999"}
-    for row, (pid, note) in enumerate(cases):
-        vol, rep = cluster_class_volume(pid)
-        # choose slices: z of the three largest classified (hypo/hyper) in-scope clusters, else largest overall
-        lab, k = ndimage.label(vol > 0)
-        sizes = ndimage.sum(vol > 0, lab, range(1, k + 1))
-        order = np.argsort(sizes)[::-1]
-        zs = []
-        for i in order:
-            com = ndimage.center_of_mass(lab == i + 1)
-            z = int(round(com[2]))
-            if all(abs(z - zz) > 6 for zz in zs):
-                zs.append(z)
-            if len(zs) == 3:
-                break
-        while len(zs) < 3:
-            zs.append(zs[-1] + 10 if zs else 110)
-        for col, z in enumerate(zs):
-            ax = axes[row, col]
-            ax.imshow(t1[::-1, :, z].T, cmap="gray", origin="lower", vmin=0, vmax=1)
-            rgba = np.zeros(vol[::-1, :, z].T.shape + (4,))
-            for cls, colr in cmap.items():
-                m = vol[::-1, :, z].T == cls
-                rgba[m] = matplotlib.colors.to_rgba(colr, alpha=0.85)
-            ax.imshow(rgba, origin="lower", interpolation="nearest")
-            ax.set_title(f"z = {z}", fontsize=7, pad=2)
-            ax.axis("off")
-        # coronal through the largest cluster
-        com = ndimage.center_of_mass(lab == order[0] + 1) if k else (113, 136, 113)
-        y = int(round(com[1]))
-        ax = axes[row, 3]
-        ax.imshow(t1[::-1, y, :].T, cmap="gray", origin="lower", vmin=0, vmax=1)
-        rgba = np.zeros(vol[::-1, y, :].T.shape + (4,))
-        for cls, colr in cmap.items():
-            m = vol[::-1, y, :].T == cls
-            rgba[m] = matplotlib.colors.to_rgba(colr, alpha=0.85)
-        ax.imshow(rgba, origin="lower", interpolation="nearest")
-        ax.set_title(f"coronal y = {y}", fontsize=7, pad=2); ax.axis("off")
-        axes[row, 0].text(-0.06, 0.5, f"{pid}: {note}", transform=axes[row, 0].transAxes, rotation=90,
-                          ha="center", va="center", fontsize=6.5, linespacing=1.1)
-    handles = [mpatches.Patch(color=cmap[1], label="hypoperfusion on cluster side"),
-               mpatches.Patch(color=cmap[2], label="hyperperfusion on cluster side"),
-               mpatches.Patch(color=cmap[3], label="subtle (no per-side deviation)")]
-    fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False, fontsize=7.5, bbox_to_anchor=(0.5, -0.01))
-    fig.text(0.5, 0.995, "Neurological convention: left of image = left hemisphere", ha="center", va="top", fontsize=7.5)
-    fig.tight_layout(rect=(0.02, 0.03, 1, 0.98))
-    fig.savefig(FIG / "fig3_representative_cases.png", dpi=300, bbox_inches="tight")
-    fig.savefig(FIG / "fig3_representative_cases.pdf", bbox_inches="tight")
-    plt.close(fig)
+    """Fig. 3: four representative in-house cases (kept for the main text)."""
+    case_montage(cases, "fig3_representative_cases")
 
 
 # --------------------------------------------------------------------------
@@ -400,8 +406,8 @@ def fig5_external_cohort():
          "excluded: 3 controls (+1 retest duplicate), 1 patient (technical)",
          "flagged, kept: 2 patients with global L/R imbalance; 3 registration flags"], AMBER, AMBER_H)
     box(52, 66.5, 46, 15.5, "Analyzed cohort",
-        ["66 controls: age 40 \u00b1 13 y (19\u201366), 12 women",
-         "99 patients: age 35 \u00b1 9 y (19\u201360), 31 women; lesional 47 / MRI-negative 52",
+        ["66 controls: age 41 \u00b1 13 y (19\u201366; recorded for 63), 12 women / 13 men (41 not recorded)",
+         "99 patients: age 35 \u00b1 9 y (19\u201360; recorded for 85), 31 women / 37 men (31 n.r.); lesional 47 / MRI-negative 52",
          "side L 43 / R 50 / bilateral 6;  lobe: temporal 51, frontal 22,",
          "multilobar 24, parietal 1, occipital 1;  hippocampal sclerosis 22",
          "reference: resected 12 / lesion + MDT 35 / clinical hypothesis 52"], GREEN, GREEN_H)
@@ -440,8 +446,98 @@ def fig5_external_cohort():
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------
+def figS_workflow():
+    """Supplementary workflow figure: every script, its inputs and outputs, in execution order."""
+    plt.rcParams.update({"font.family": ["Liberation Sans", "DejaVu Sans"]})
+    fig = plt.figure(figsize=(7.2, 9.6))
+    ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, 100); ax.set_ylim(0, 100); ax.axis("off")
+    EC, INK = "#4a4a4a", "#1f1f1f"
+    def box(x, y, w, h, title, lines, fc, hc, fs=5.5, tfs=6.4, pad=1.2):
+        ax.add_patch(mpatches.FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0,rounding_size=1.0", fc=fc, ec=EC, lw=0.7, zorder=2))
+        top = y + h
+        if title:
+            th = 3.2
+            ax.add_patch(mpatches.FancyBboxPatch((x, y + h - th), w, th, boxstyle="round,pad=0,rounding_size=1.0", fc=hc, ec="none", zorder=3))
+            ax.add_patch(mpatches.Rectangle((x, y + h - th), w, th / 2, fc=hc, ec="none", zorder=3))
+            ax.text(x + pad, y + h - th / 2, title, ha="left", va="center", fontsize=tfs, fontweight="bold", color=INK, zorder=4)
+            top = y + h - th
+        ax.text(x + pad, (top + y) / 2, "\n".join(lines), ha="left", va="center", fontsize=fs, color=INK, linespacing=1.35, zorder=4)
+    def arrow(x0, y0, x1, y1):
+        ax.annotate("", xy=(x1, y1), xytext=(x0, y0), zorder=1, arrowprops=dict(arrowstyle="-|>", lw=0.8, color=EC, shrinkA=0, shrinkB=0, mutation_scale=7))
+    def line(x0, y0, x1, y1):
+        ax.plot([x0, x1], [y0, y1], color=EC, lw=0.8, zorder=1)
+    BLUE, BLUE_H = "#e4edf7", "#c6d8ec"; AMBER, AMBER_H = "#fbf1dc", "#f1dcad"; TEAL, TEAL_H = "#e1f0ec", "#b9dcd2"
+    GREEN, GREEN_H = "#e8f1df", "#c7ddb4"; ROSE, ROSE_H = "#f9e6e0", "#efc5b8"; GREY, GREY_H = "#f3f3f3", "#dcdcdc"; VIOLET, VIOLET_H = "#ece6f4", "#d2c6e6"
+    box(2, 90, 47, 9.5, "Inputs, in-house",
+        ["Dataset/<P>/: T1w, aparc+aseg, HCP-ASL CBF (MNI, 0.8 mm)",
+         "DatasetControls/FM_*/<HC>/: 180 HCP controls, 3 age bands",
+         "ez_ground_truth.py (MDT side, certainty); clinical_spreadsheet.xlsx"], BLUE, BLUE_H)
+    box(51, 90, 47, 9.5, "Inputs, external (Chalfont)",
+        ["<chalfont>/{controls,discrete,negative}/<ID>/: MPRAGE, eASL Flow,",
+         "   transit-corrected Flow, GIF parcellation (read-only)",
+         "scripts/chalfont/stage_chalfont.py -> metadata/subjects.csv, groups.json"], BLUE, BLUE_H)
+    arrow(25, 90, 25, 85.5); arrow(75, 90, 75, 85.5)
+    box(2, 75, 47, 10.5, "Symmetric-template registration (symreg/)",
+        ["build_sym_template.py -> templates/T1_sym.nii.gz (flip-symmetric T1)",
+         "make_jobs.py | xargs -P 8 reg_subject.sh: flirt + fnirt, 197 subjects",
+         "-> sym_perf/<ID>_perf_sym.nii.gz, <ID>_aparc_sym.nii.gz"], AMBER, AMBER_H)
+    box(51, 75, 47, 10.5, "Registration and QC (scripts/chalfont/)",
+        ["asl_quality.py -> qc/asl_quality_perf.csv, metadata/qc_exclusions.json",
+         "build_template_atlas.py -> atlas/consensus_parcellation_sym.nii.gz",
+         "run_registration.sh / reg_chalfont_subject.sh: ASL->T1 rigid, T1->T1_sym"], AMBER, AMBER_H)
+    line(25, 75, 25, 70.5); line(75, 75, 75, 70.5); line(25, 70.5, 75, 70.5); arrow(50, 70.5, 50, 67.5)
+    box(2, 47.5, 96, 20, "Pipeline B, voxel-wise  (symreg/run_sym_pipeline.sh | scripts/chalfont/run_chalfont_pipeline.sh; --dataset via dataset_config.py)",
+        ["01_build_control_normative.py --sym [--rebuild-group]: control CBF mean/SD per band (Welford), consensus parcellation,",
+         "   patient CBF z  ->  results_zscore/groups/<band>/, results_zscore/patients/<ID>/",
+         "02_compute_zai.py --sym --group <band>: AI = 200 [CBF(v) - CBF(v_bar)] / [CBF(v) + CBF(v_bar)]; control mean/SD of AI (5 % floor);",
+         "   z_AI; clusters at 1.96 / 50 voxels; direction class from per-side CBF z  ->  results_zscore/asymmetry/{groups,patients}/",
+         "   (--pseudo-controls: each control scored leave-one-out)",
+         "03_clinical_maps.py --sym: gray-matter maps, 37-ROI scope, voxel threshold 3 / 50  ->  results_zscore/clinical/<ID>/",
+         "06_clinical_interpretation.py --all: tiers (peak >= 4, extent >= 100 at 1.96), production rule, call strength",
+         "   ->  results_zscore/clinical/cohort_concordance.csv and per-patient reports",
+         "scripts/clinical_stratified_analysis.py: rule x tier x scope grid  ->  ez_analysis_mdt/clinical_*.csv",
+         "scripts/rerun_thresholding_methods.py --sym: methods M1-M13  ->  asymmetry/summary/all_patients_method_summary.csv",
+         "Chalfont: scripts/chalfont/calibration_loo.py, collect_summaries.py, evaluate_lateralization.py  ->  lateralization/eval_*.csv"],
+        GREEN, GREEN_H, fs=5.2)
+    arrow(20, 47.5, 20, 43); arrow(66, 47.5, 66, 43)
+    box(2, 27, 37, 16, "Pipeline A, regional (original space)",
+        ["scripts/build_comprehensive_asymmetry.py:",
+         "   37 ROI means, 15 indices  ->  results_analysis/<P>/",
+         "05_roi_discrimination.py: 9 aggregation scores,",
+         "   ROC vs MDT  ->  ez_analysis_mdt/",
+         "scripts/regional_loocv.py, aggregation_separability.py,",
+         "   per_index_discrimination.py"], TEAL, TEAL_H)
+    box(41, 27, 57, 16, "Enhanced estimators, v2 (post hoc; scripts/v2/)",
+        ["prep_subject_features.py --dataset {inhouse,chalfont}: ROI means (own parcellation",
+         "   or atlas), 8-mm smoothed CBF on a mirror-symmetric 2.4-mm grid  ->  v2_features/",
+         "analyze_v2.py: regional z_LI, z-bar_S; smoothed z_AI, hypoperfused z-mass LI_M;",
+         "   leave-one-out calibration (95th percentile)  ->  ez_analysis_mdt/v2/<dataset>/*.csv",
+         "multimetric_comparison.py: call rate, PPV, sensitivities, AUC, LR+, kappa, FP, strata",
+         "advanced_lateralization.py (spike): covariate model, antisymmetric classifier, lobes"], VIOLET, VIOLET_H, fs=5.2)
+    line(20, 27, 20, 22.5); line(66, 27, 66, 22.5); line(20, 22.5, 66, 22.5); arrow(43, 22.5, 43, 19.5)
+    box(2, 8, 47, 11.5, "Audit (scripts/audit/, docs/audit/)",
+        ["voxel_noise_budget.py [fwhm]: control SD of AI by region and scale",
+         "regional_normative_prototype.py: ROI LI SD, leave-one-out false positives",
+         "symreg/check_full_calibration.py: GM % |z_AI| >= 1.96 per patient",
+         "docs/audit/METHODS_AUDIT_2026-10-20.md: findings and decisions"], ROSE, ROSE_H)
+    box(51, 8, 47, 11.5, "Manuscript outputs (scripts/make_manuscript_figures.py)",
+        ["Fig. 1 framework; Fig. 2 calibration; Fig. 3 cases (asymmetry/patients",
+         "   + T1_sym); Fig. 4 enhanced estimator (v2 CSVs); Fig. 5 external cohort;",
+         "Figs S1-S3 (appendix); tables from the CSVs above",
+         "manuscript/Manuscript_Complete.tex  ->  tectonic  ->  PDF"], GREY, GREY_H)
+    line(25, 8, 25, 4.5); line(75, 8, 75, 4.5); line(25, 4.5, 75, 4.5); arrow(50, 4.5, 50, 3.6)
+    box(8, 0.4, 84, 3.2, None,
+        ["Run control: scripts/run_capped.sh <name> <MemoryMax> <log> -- <cmd> (memory-capped, detached);  tests: python -m pytest -q tests;  code: github.com/aminjalali-research/AsymmetryAnalysis"],
+        GREY, GREY_H, fs=5.2)
+    fig.savefig(FIG / "figS_workflow.png", dpi=300, bbox_inches="tight", pad_inches=0.04)
+    fig.savefig(FIG / "figS_workflow.pdf", bbox_inches="tight", pad_inches=0.04)
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     fig1_schematic()
+    figS_workflow()
     fig4_enhanced()
     fig5_external_cohort()
     fig2_calibration()

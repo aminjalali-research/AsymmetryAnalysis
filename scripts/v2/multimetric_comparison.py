@@ -66,14 +66,19 @@ def metrics(df, strata, label, fp_rate=np.nan):
     ok_all = (u.call == u.ez)
     sensL = ok_all[u.ez == "L"].mean(); sensR = ok_all[u.ez == "R"].mean()
     ppv = (called.call == called.ez).mean() if len(called) else np.nan
-    # likelihood ratio of a left call for left EZ (and right call for right), pooled
+    # positive likelihood ratio of a call for the called side, averaged over sides so that an
+    # uninformative always-X rule gives exactly 1.0 despite the 43:50 class imbalance
     tp = ((called.call == called.ez)).sum(); fp = len(called) - tp
-    sens_called = tp / n; fpr_called = fp / n
-    lr_pos = (sens_called / fpr_called) if fpr_called > 0 else np.inf
+    tpL = ((called.call == "L") & (called.ez == "L")).sum(); tpR = ((called.call == "R") & (called.ez == "R")).sum()
+    fpL = ((called.call == "L") & (called.ez == "R")).sum(); fpR = ((called.call == "R") & (called.ez == "L")).sum()
+    sens_side = np.mean([tpL / nL if nL else 0, tpR / nR if nR else 0])
+    fpr_side = np.mean([fpL / nR if nR else 0, fpR / nL if nL else 0])
+    lr_pos = (sens_side / fpr_side) if fpr_side > 0 else np.inf
     kap = kappa(called.call.values, called.ez.values) if len(called) > 1 else np.nan
     a, lo, hi = auc_sign_free(u.value, u.ez)
     row = dict(method=label, n=n, nL=nL, nR=nR,
                call_rate=round(len(called) / n, 2), ppv_of_calls=round(ppv, 2) if np.isfinite(ppv) else np.nan,
+               _call_rate=len(called) / n, _ppv=ppv if np.isfinite(ppv) else np.nan, _bal=0.5 * (sensL + sensR), _auc=a,
                n_calls=len(called), correct_calls=int(tp),
                sens_left=round(sensL, 2), sens_right=round(sensR, 2),
                balanced_acc=round(0.5 * (sensL + sensR), 3), agree_all=f"{int(ok_all.sum())}/{n}",
@@ -109,7 +114,9 @@ def main():
         lesional = [i for i in ids if sub.loc[i, "group"] == "discrete"]; negative = [i for i in ids if sub.loc[i, "group"] == "negative"]
         temporal = [i for i in ids if sub.loc[i, "ez_lobe"] == "temporal"]; extratemp = [i for i in ids if i not in temporal]
         resected = [i for i in ids if sub.loc[i, "reference_tier"] == "resected"]
-    strata = {"lesional": lesional, "MRI_negative": negative, "temporal": temporal, "extratemporal": extratemp, "resection_defined": resected}
+    strata = {"lesional": lesional, "MRI_negative": negative, "temporal": temporal, "extratemporal": [i for i in extratemp if i], "resection_defined": resected}
+    if cfg.is_inhouse:
+        strata["invasively_supported"] = strata.pop("resection_defined")   # P016 is stereo-EEG, not resected
     rows = []
     # --- as-implemented voxel-wise rule (clinical tier) -----------------------------------
     cc = pd.read_csv(cfg.output_dir / "clinical" / "cohort_concordance.csv")
@@ -137,17 +144,17 @@ def main():
     lR = pd.read_csv(v2 / "R_loo_controls.csv"); lV = pd.read_csv(v2 / "V_loo_controls.csv")
     for src, loo, stat, label in [(R, lR, "R_temporal", "regional temporal z"), (R, lR, "R_mesial", "regional mesial z"),
                                   (R, lR, "R_all37", "regional all-37 z"), (V, lV, "V_all_t2", "smoothed voxel z-mass (t=2)")]:
-        thr = float(S.loc[stat, "threshold"]); fp = float((np.abs(loo[stat]) >= thr).mean())
+        thr = float(np.nanpercentile(np.abs(loo[stat]), 95)); fp = float((np.abs(loo[stat]) >= thr).mean())   # exact, not the rounded summary.csv value
         d = src[["id", "ez", stat]].rename(columns={stat: "value"})
-        d_sign = d.copy(); d_sign["call"] = np.where(d.value < 0, "L", "R")
-        d_cal = d.copy(); d_cal["call"] = np.where(np.abs(d.value) >= thr, np.where(d.value < 0, "L", "R"), "none")
+        d_sign = d.copy(); d_sign["call"] = np.where(d.value < 0, "L", np.where(d.value > 0, "R", "none"))   # exact 0 = no call
+        d_cal = d.copy(); d_cal["call"] = np.where((np.abs(d.value) >= thr) & (d.value != 0), np.where(d.value < 0, "L", "R"), "none")
         rows.append(metrics(d_sign, strata, f"{label}, sign (always calls)", 1.0))
         rows.append(metrics(d_cal, strata, f"{label}, calibrated call (5% FP)", fp))
     # majority baseline
     base = d0.copy(); base["call"] = "L" if (base.ez == "L").sum() >= (base.ez == "R").sum() else "R"
     rows.append(metrics(base, strata, "always majority side", 1.0))
     T = pd.DataFrame(rows)
-    for c in ["lesional", "MRI_negative", "temporal", "extratemporal", "resection_defined"]:
+    for c in ["lesional", "MRI_negative", "temporal", "extratemporal", "resection_defined", "invasively_supported"]:
         if c not in T:
             T[c] = "n<4"
         T[c] = T[c].fillna("n<4")
@@ -155,12 +162,14 @@ def main():
     # higher call rate and a higher PPV of calls (ties allowed); the composite rank-sum is reported
     # only as a secondary, equal-weight summary over PPV, balanced accuracy, control FP, MRI-negative
     # agreement and AUC.
-    cr, pv = T.call_rate.values, T.ppv_of_calls.fillna(0).values
+    cr, pv = T["_call_rate"].values, T["_ppv"].fillna(0).values
     T["pareto_calls_vs_ppv"] = [not any((cr[j] >= cr[i]) and (pv[j] >= pv[i]) and ((cr[j] > cr[i]) or (pv[j] > pv[i])) for j in range(len(T))) for i in range(len(T))]
     def frac(sr): return sr.astype(str).str.extract(r"(\d+)/(\d+)").astype(float).pipe(lambda x: x[0] / x[1])
-    comp = pd.DataFrame({"ppv": -T.ppv_of_calls.fillna(0), "bal": -T.balanced_acc, "fp": T.control_fp_rate.fillna(1.0),
-                         "neg": -frac(T["MRI_negative"]).fillna(0), "auc": -T.auc.fillna(0.5)})
-    T["composite_rank"] = comp.rank().sum(axis=1).rank(method="min").astype(int)
+    comp = pd.DataFrame({"ppv": -T["_ppv"], "bal": -T["_bal"], "fp": T.control_fp_rate,
+                         "neg": -frac(T["MRI_negative"]), "auc": -T["_auc"]})
+    # mean rank over the criteria available for a method (NaN is not imputed)
+    T["composite_rank"] = comp.rank(na_option="keep").mean(axis=1).rank(method="min").astype(int)
+    T = T.drop(columns=[c for c in T.columns if c.startswith("_")])
     out = v2 / "multimetric_comparison.csv"; T.to_csv(out, index=False)
     pd.set_option("display.width", 320); pd.set_option("display.max_columns", 40)
     cols = ["method", "n", "call_rate", "n_calls", "correct_calls", "ppv_of_calls", "sens_left", "sens_right", "balanced_acc", "majority", "auc", "auc_lo", "auc_hi", "lr_pos", "kappa_calls", "control_fp_rate", "lesional", "MRI_negative", "temporal", "extratemporal", "resection_defined", "pareto_calls_vs_ppv", "composite_rank"]

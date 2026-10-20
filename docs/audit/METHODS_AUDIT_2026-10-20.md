@@ -35,7 +35,9 @@ The 5 % SD floor binds in 0.1 % of GM voxels; it is irrelevant. An AI of 200 % m
 
 The noise is intrinsic to voxel-level ASL (voxel CV ≈ 40 % gives SD(AI) ≈ 100·√2·CV ≈ 57 %); upsampling 2.5 mm data to 0.8 mm adds no information. Recomputing the control SD after smoothing the perfusion maps with a 6 mm FWHM Gaussian (20 controls) gives 22 % in GM, 20 % in the hippocampus and 29 % in temporal cortex, i.e. still an 80–115 % detection floor at z = 4 and ~40 % at z = 2. Voxel-wise z-scoring of ASL asymmetry cannot reach the 10–20 % effect size without far heavier aggregation (ROI level or ≥ 10 mm smoothing with a lower z and cluster-level inference).
 
-Script: `scripts/audit/voxel_noise_budget.py`.
+With the 8 mm kernel used by the v2 estimator (`python scripts/audit/voxel_noise_budget.py 8`): GM 17 % (IQR 13–21), hippocampus 16 %, temporal cortex 23 %, i.e. a 67 % asymmetry for z = 4 and 34 % for z = 2.
+
+Script: `scripts/audit/voxel_noise_budget.py [fwhm]`.
 
 ### 3.2 The direction rule measures the control band, not the patient (critical)
 
@@ -103,7 +105,7 @@ Code: `scripts/v2/prep_subject_features.py` (ROI means with the subject's own pa
 | Regional all-37 z | 60/93 | 0.64 (0.54–0.74) | 14 called, 13 correct |
 | Regional mesial z | 60/93 | 0.64 (0.54–0.74) | 12 called, 7 correct |
 | Smoothed voxel, 37-ROI scope, t = 2 | 59/93 | 0.63 (0.53–0.73) | 8 called, 8 correct |
-| Smoothed voxel, temporal scope | 53/93 | 0.56 | degenerate threshold (mass 0 in most controls) |
+| Smoothed voxel, temporal scope | 53/93 | 0.56 | threshold at the ±1 boundary: not a 5 % calibration (control FP 14 %) |
 
 Majority baseline 0.54. The regional temporal sign rule beats the majority baseline (binomial p ≈ 0.02) and a calibrated call is correct in 12 of 13 patients. Calibration of the smoothed voxel model on Chalfont: LOO controls 3.8 % of GM beyond |z| ≥ 1.96, patients 7.0 %.
 
@@ -166,6 +168,10 @@ All stages completed 2026-10-20 13:00 (`external_chalfont/results_zscore/lateral
 6. **Acquisition and QC:** record time since last seizure and medication; use the multi-PLD ATT map to flag vascular/transit artifacts that masquerade as asymmetry; analyze P024 separately.
 7. **Clinical output:** a one-page report with (a) per-ROI z table with control reference ranges, (b) one smoothed asymmetry map at the calibrated threshold, (c) the subject's global CBF and calibration (fraction of GM beyond the control 95 % range), and (d) an explicit "no lateralizing abnormality" call when nothing passes the calibrated threshold.
 8. **Validate on the pre-specified Chalfont endpoint** before any claim; report balanced accuracy with the majority baseline and the control false-positive rate every time.
+
+## 8b. Independent code review of v2 (2026-10-20, second pass)
+
+Fixed after review: rounded threshold in `multimetric_comparison.py` (all-37 calibrated calls 15/13 → 14/13, PPV 0.93); LR+ now averaged over sides (a constant call gives 1.0); Pareto flag and composite rank on unrounded values with NaN kept out; exact-zero statistic = no call; V variants whose LOO 95th percentile sits at |LI_M| = 1 are flagged `threshold_at_boundary` (only V_all_t2 is a true 5 % calibration); in-house stratum renamed 'invasively supported'. Headline numbers unchanged.
 
 ## 9. Advanced-method spike (2026-10-20)
 

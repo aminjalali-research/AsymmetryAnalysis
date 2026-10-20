@@ -275,6 +275,9 @@ def main():
     for k in [c for c in pat_V.columns if c.startswith("V_") and "mass" not in c and "frac" not in c]:
         thr = float(np.nanpercentile(np.abs(loo_V[k]), 95)); fp = float((np.abs(loo_V[k]) >= thr).mean())
         m, t = evaluate(pat_V, k, thr, gt, k); m["control_fp_call_rate"] = round(fp, 3); m["dataset"] = cfg.name
+        # LI_M is bounded at +-1: when the control 95th percentile sits at the boundary, the rule is
+        # "call whenever all hypoperfused mass is one-sided" and is NOT a 5 % calibration -> flag it
+        m["threshold_at_boundary"] = bool(thr >= 0.999)
         summary_rows.append(m); st = strata_table(t, gt, cfg); st.insert(0, "statistic", k); strata_rows.append(st); per_patient[k] = t
         m2, _ = evaluate(pat_V, k, 0.0, gt, k + "_sign"); m2["control_fp_call_rate"] = 1.0; m2["dataset"] = cfg.name; summary_rows.append(m2)
 

@@ -16,7 +16,7 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   of 60: `FM_20_39`, `FM_40_59`, `FM_60_79`. FM_20_39 = 30 HCD (≤21 y) + 30 HCA (≥36 y): **no control aged
   22–35**. Controls were scanned at HCP sites, not locally. Old per-sex dirs (`20_29F`, `F_*`, `M_*`) do not exist.
 - **Pipeline B runs in symmetric space** (`--sym`): every subject registered (FSL flirt + fnirt) to a
-  flip-symmetric T1 template. Calibration: GM %|zAI|≥1.96 = **12.9%** (was 31.5% in plain MNI); controls
+  flip-symmetric T1 template. Calibration: GM %|zAI|≥1.96 = **12.6%** (was 31.5% in plain MNI; 12.9% before the 2026-10-20 validity-rule rerun); controls
   leave-one-out 6.9%. Original-space outputs archived in `_archived_origspace_zai_20260622/`.
 - **zAI maps are antisymmetric → every cluster is a mirrored pair.** Count and vote with one member per
   pair (`cluster_hemi == ez_side_pred`). Pair counts: cohort 698 hypo / 556 hyper / 3915 subtle / 1 mixed;
