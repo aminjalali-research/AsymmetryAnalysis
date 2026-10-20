@@ -244,7 +244,7 @@ def case_montage(cases, out_name, root: Path | None = None, z_mm=(-24, -12, 0, 1
     n = len(cases); ncol = len(z_mm) + 1
     fig = plt.figure(figsize=(7.2, 1.42 * n + 0.75))
     gs = fig.add_gridspec(n, ncol, left=0.075, right=0.90, top=0.95 if title is None else 0.92, bottom=0.07, wspace=0.03, hspace=0.06)
-    cool = plt.get_cmap("Blues"); warm = plt.get_cmap("Reds")
+    cool = plt.get_cmap("Blues"); warm = plt.get_cmap("Reds"); UP = 3
     def rgba_of(cls2d, z2d):
         rgba = np.zeros(cls2d.shape + (4,))
         a = np.clip((np.abs(z2d) - 3.0) / (zmax - 3.0), 0.25, 1.0)      # colour intensity from |z| 3 .. zmax
@@ -260,6 +260,9 @@ def case_montage(cases, out_name, root: Path | None = None, z_mm=(-24, -12, 0, 1
                 bg = t1[::-1, :, zi[c]].T; cl = vol[::-1, :, zi[c]].T; zz = zv[::-1, :, zi[c]].T
             else:
                 bg = t1[::-1, yi, :].T; cl = vol[::-1, yi, :].T; zz = zv[::-1, yi, :].T
+            # upsample the slices (3x) so that the embedded images are sharp in the PDF/PNG:
+            # bilinear for the anatomy, nearest for the cluster labels and their z values
+            bg = ndimage.zoom(bg, UP, order=1); cl = ndimage.zoom(cl, UP, order=0); zz = ndimage.zoom(zz, UP, order=0)
             ax.imshow(bg, cmap="gray", origin="lower", vmin=0, vmax=1, interpolation="bilinear")
             ax.imshow(rgba_of(cl, zz), origin="lower", interpolation="nearest")
             ax.set_facecolor("black"); ax.set_xticks([]); ax.set_yticks([])
@@ -282,8 +285,8 @@ def case_montage(cases, out_name, root: Path | None = None, z_mm=(-24, -12, 0, 1
              ha="center", fontsize=5.8, color="#444444")
     if title:
         fig.suptitle(title, fontsize=8, y=0.985)
-    fig.savefig(FIG / f"{out_name}.png", dpi=300, bbox_inches="tight")
-    fig.savefig(FIG / f"{out_name}.pdf", bbox_inches="tight")
+    fig.savefig(FIG / f"{out_name}.png", dpi=400, bbox_inches="tight")
+    fig.savefig(FIG / f"{out_name}.pdf", bbox_inches="tight", dpi=400)
     plt.close(fig)
 
 
