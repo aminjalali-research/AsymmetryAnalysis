@@ -21,13 +21,14 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
 - **zAI maps are antisymmetric → every cluster is a mirrored pair.** Count and vote with one member per
   pair (`cluster_hemi == ez_side_pred`). Pair counts: cohort 698 hypo / 556 hyper / 3915 subtle / 1 mixed;
   P015 106 hyper / 6 hypo; P027 151 hypo / 2 hyper. Older numbers (229/14, 7785/1406/1180/3) are double counts.
-- **Headline results (honest):**
+- **Headline results (honest, after the 2026-10-20 validity-rule rerun):**
   - Regional (Pipeline A) best AUC 0.60 (95% CI 0.28–0.90); leave-one-out 8/13 = always-left baseline.
-  - Voxel-wise primary rule (clinical tier): 7/13 agree (P013, P016, P022, P024, P025, P026, P029),
-    balanced accuracy 0.51. Best rule of all tested (direction-aware majority, clinical/native tier): 9/13, balanced accuracy 0.64. Always-left: 8/13, 0.50.
-  - Call strength: strong 2/2 (P024, P026), moderate 3/6, weak 2/5. Largest summed volume frontal in 9/13; largest single cluster temporal in 7/13 (MDT side in 6).
-  - Hyperperfusion-dominant: 3/13 (P015 right/contralateral, P029 left, P030 right/ipsilateral).
-  - Conclusion: no rule lateralizes better than chance once the 8:5 left majority is considered.
+  - Voxel-wise primary rule (clinical tier): 7/13 agree (P013, P016, P017, P023, P024, P026, P029), balanced
+    accuracy 0.55; no rule >8/13 or balanced accuracy >0.61; always-left 8/13, 0.50. Peak zAI 5.9–9.2 (no clipping).
+  - Direction class tracks the global CBF offset vs the HCP band (ρ≈0.87): hyper-dominant P015/P029/P030 = artefact.
+  - Chalfont (93 unilateral, 66 same-scanner controls): primary rule 58/93 (0.63) but 56 % of LOO controls get a
+    strong/moderate call; regional normative temporal z 61/93 (0.65, AUC 0.69), calibrated calls 12/13 at 6 % FP.
+  - Voxel noise budget: control SD of AI 55–70 % at 0.8 mm → |zAI|=4 needs >200 % asymmetry (docs/audit/).
 - **Manuscript (private, `manuscript/`, gitignored):** targets *Clinical Neurophysiology* (prototype:
   Scarabello et al. 2026, Clin Neurophysiol 191:2112368). Title: "Normative voxel-wise arterial spin
   labeling asymmetry for lateralizing the epileptogenic zone in drug-resistant focal epilepsy". Synced to
