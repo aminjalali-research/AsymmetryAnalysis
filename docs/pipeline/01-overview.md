@@ -36,6 +36,10 @@ The two pipelines are independent. Pipeline A is the discrimination claim; Pipel
   ez_analysis_mdt/   (ROC, LOOCV, method comparison)
 ```
 
+## Current state (2026-10-20)
+
+The cohort is 17 patients (P013–P030, P014 excluded; 13 unilateral) and 180 HCP controls in three sex-pooled bands; everything runs in symmetric-template space (`--sym`). Two additions sit beside the canonical scripts: the external-validation switch (`dataset_config.py --dataset chalfont`, `scripts/chalfont/`) and the enhanced estimators (`scripts/v2/`). The full workflow with every script, input and output is drawn in the manuscript appendix (`scripts/make_manuscript_figures.py::figS_workflow`) and summarized in `CLAUDE.md`; the reasons the voxel-wise pipeline does not lateralize, and what replaces it, are in `docs/audit/METHODS_AUDIT_2026-10-20.md`.
+
 ## The 8 canonical scripts
 
 | Step | Script | Purpose |
@@ -48,6 +52,10 @@ The two pipelines are independent. Pipeline A is the discrimination claim; Pipel
 | – | `ez_ground_truth.py` | MDT-reviewed clinical labels (imported by step 5) |
 | – | `analyze_zai_distributions.py` | Methodology validation (threshold sensitivity) |
 | – | `interactive_viewer.py` | FSLeyes-based interactive QC (options 1–20) |
+| 6 | `06_clinical_interpretation.py` | Reporting tiers, production rule, call strength, cohort concordance |
+| – | `scripts/v2/*.py` | Enhanced estimators: regional normative z, smoothed z-mass, leave-one-out calibration, multi-metric comparison |
+| – | `scripts/chalfont/*.py`, `dataset_config.py` | External cohort staging, QC, atlas, registration, pre-specified evaluation |
+| – | `scripts/run_capped.sh` | Memory-capped, detached execution of any long run |
 
 ## Claims supported
 

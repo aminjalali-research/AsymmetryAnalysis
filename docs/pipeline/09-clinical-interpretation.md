@@ -61,6 +61,10 @@ only when `--all` is passed):
 | `top_voxels` | Voxel count of the top lobe |
 | `peak_zai` | Maximum \|peak\_z\| among surviving in-scope clusters |
 
+## Tiers as implemented (audit 2026-10-20)
+
+Step 2 forms clusters at |zAI| ≥ 1.96 with ≥ 50 voxels. This script keeps a cluster when its **peak** |zAI| reaches `--peak-threshold` and its extent at 1.96 reaches `--size-threshold`; the tiers are therefore not "≥ 100 contiguous voxels all above 4". The maps of step 3 use a voxel threshold of 3. In the external cohort, 56 % of healthy controls scored leave-one-out receive a strong or moderate call at the clinical tier, so call strength must be read together with that false-positive rate (`external_chalfont/results_zscore/lateralization/eval_control_false_positives.csv`).
+
 ## Default thresholds
 
 | Threshold | Default | Source / rationale |
@@ -195,7 +199,7 @@ rule (2026-05-06 cohort run; P013, P014, P015, P020, P026):
     heterogeneity / mesial-structure sensitivity gap reported by Han
     et al. 2026 for SEEG-validated PET Z-maps)
   - P015: predicted R, MDT=L (DISAGREE; **198 hyper / 82 hypo
-    clusters** — a hyperperfusion-dominant phenotype consistent with
+    clusters** — a hyperperfusion-dominant class (shown in the 2026-10-20 audit to track the patient's global CBF offset from the HCP band rather than focal pathology) consistent with
     FCD-II or recent-seizure / post-ictal physiology). Notable: under
     the previous polarity-flip rule P015 was predicted L (apparently
     concordant), but that prediction relied on the hypoperfusion-only

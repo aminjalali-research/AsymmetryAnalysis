@@ -64,3 +64,17 @@ the primary endpoint only.
 | 7 | `asl_quality.py` hemisphere label inverted | fixed 2026-10-20: left mask from the affine (world x < 0); `lr_gm_ratio` is now L/R; metrics regenerated; exclusions unchanged (symmetric bounds) |
 | 8 | stale metadata (n=69 vs 66, prescan wording) | fixed 2026-10-20 (`groups.json` age_summary, `dataset_config.py` comment, `CITATION_MAP.md` section 1) |
 | 9–12 | minor | open |
+
+## Results (2026-10-20, written after the run; the plan above is unchanged)
+
+| Endpoint | Result |
+|---|---|
+| Primary: production rule, clinical tier, 93 unilateral (43 L / 50 R) | 58/93 agree (62 %, Wilson 52–72 %); balanced accuracy 0.63; majority baseline 0.54; binomial p = 0.06 |
+| Call strength | strong 16/20, moderate 29/46, weak 13/22, bilateral 0/5 |
+| Secondary 1: in-house-selected direction-aware majority | 50/93 (0.54): did not replicate |
+| Secondary 2: strong/moderate call in leave-one-out controls | 37/66 (56 %, 44–67 %); any lateralizing call 63/66 (95 %) |
+| Calibration | controls 6.1 % (median 4.5 %), patients 9.6 % (median 7.5 %) of GM beyond \|zAI\| ≥ 1.96 |
+| Strata | lesional 32/46 (0.69), MRI-negative 26/47 (0.55), temporal 33/49 (0.67), frontal 10/21 (0.47), resected 8/12 (0.67) |
+| Sensitivity grid | no variant above 60/93 (temporal polarity flip, research tier, 0.64) |
+
+Post hoc enhanced estimators (same cohort, `scripts/v2/`): regional temporal z 61/93 (0.65, AUC 0.69), calibrated calls 12/13 at 6 % control FP; smoothed z-mass 59/93, 8/8 calibrated; antisymmetric classifier 55–59/93 (no gain). Audit findings 3, 4, 6 and 9–12 remain open; see `docs/audit/METHODS_AUDIT_2026-10-20.md`.

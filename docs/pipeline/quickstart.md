@@ -1,84 +1,72 @@
-# Quickstart — Reproduce the Canonical Results
+# Quickstart — Reproduce the Canonical Results (2026-10-20)
 
-> Run these commands in order to reproduce the manuscript's Pipeline A and Pipeline B results from the released codebase. Assumes you have followed [`install.md`](install.md).
+> Run these commands in order to reproduce the manuscript's results from the released codebase. Assumes you have followed [`install.md`](install.md) and that FSL is on `PATH`.
 
 ## Prerequisites
 
-1. Cloned this repository
-2. Activated a Python ≥ 3.9 virtual environment with the requirements installed (see `install.md`)
-3. `Dataset/` and `DatasetControls/` populated (FreeSurfer-preprocessed; the released codebase does not run FreeSurfer itself)
-4. `clinical_spreadsheet.xlsx` present at repo root
-5. (Optional, only for `interactive_viewer.py`) FSLeyes on `PATH`
+1. Cloned this repository; Python ≥ 3.9 environment with the requirements installed
+2. `Dataset/` (17 patients) and `DatasetControls/FM_*/` (3 bands × 60 controls) populated with HCP-ASL outputs and FreeSurfer `aparc+aseg`
+3. `clinical_spreadsheet.xlsx` and `ez_ground_truth.py` at the repo root
+4. FSL (flirt, fnirt) for the symmetric registration; FSLeyes only for `interactive_viewer.py`
 
-## Reproduce Pipeline B (voxel-wise zAI)
+## Memory rule
 
-```bash
-# 1. Build the control normative database (one-time, ~5 min)
-python 01_build_control_normative.py --group F_20_39
+Every long run goes through `scripts/run_capped.sh <name> <MemoryMax> <log> -- <cmd>` (own systemd scope, hard memory cap, no swap, detached). Never run two pipelines at once; per-subject jobs of steps 01–03 peak at 1–9 GB (step 03 up to 23 GB on cluster-rich subjects), so `CHALFONT_JOBS=5` and a 34–40 GB cap are safe on a 64 GB machine.
 
-# 2. Compute control-referenced zAI maps for every patient (~1 min/patient)
-python 02_compute_zai.py
-
-# 3. Apply gray-matter masking + clinical thresholds
-python 03_clinical_maps.py
-
-# 4. Render publication figures 10-16
-python 04_publication_figures.py
-```
-
-Outputs of interest after these four commands:
-
-- `results_zscore/groups/F_20_39/{mean,sd}_perfusion.nii.gz` — control normative
-- `results_zscore/asymmetry/patients/<pid>/<pid>_asymmetry_zscore.nii.gz` — per-patient zAI
-- `results_zscore/clinical/<pid>/<pid>_clinical_*.nii.gz` — clinical-grade maps
-- `visual_analysis/{10..16}_zai_*.png` — figures 10–16
-
-## Reproduce Pipeline A (ROI MDT discrimination)
-
-Pipeline A is independent of Pipeline B and can be run on its own.
+## Pipeline B (voxel-wise, symmetric space)
 
 ```bash
-# 5. ROI-based discrimination using MDT-reviewed labels
-python 05_roi_discrimination.py
+python symreg/build_sym_template.py                                   # once: flip-symmetric T1 template
+python symreg/make_jobs.py full | tr '\t' ' ' | xargs -P 8 -L 1 bash symreg/reg_subject.sh   # 197 subjects
+scripts/run_capped.sh sym 34G symreg/logs/run.out -- bash symreg/run_sym_pipeline.sh         # 01 -> 02 (3 bands) -> 03 -> 06 -> thresholding
+python symreg/check_full_calibration.py                               # GM % |zAI| >= 1.96 per patient (12.6 %; controls 6.9 %)
+python scripts/clinical_stratified_analysis.py                        # rule x tier x scope grid, balanced accuracy
 ```
 
-Outputs:
-
-- `ez_analysis_mdt/analysis_report.txt` — top-line summary
-- `ez_analysis_mdt/method_comparison.png` — AUC across the 15 indices
-- `ez_analysis_mdt/method_performance_*.csv` — full performance tables
-
-## Optional methodology + QC
+## Pipeline A (regional)
 
 ```bash
-# zAI threshold-justification distributions (referenced in supplementary)
-python analyze_zai_distributions.py
-
-# Interactive 3D inspection (requires FSLeyes)
-python interactive_viewer.py
-# pick a patient, then option 19 for the cleanest presurgical view
+python scripts/build_comprehensive_asymmetry.py && python 05_roi_discrimination.py
+python scripts/regional_loocv.py && python scripts/aggregation_separability.py
 ```
 
-## Expected runtime end-to-end
+## External cohort (Chalfont) and enhanced estimators
+
+```bash
+python scripts/chalfont/stage_chalfont.py && python scripts/chalfont/asl_quality.py && python scripts/chalfont/build_template_atlas.py
+bash scripts/chalfont/run_registration.sh
+scripts/run_capped.sh chalfont 34G external_chalfont/logs/run.out -- env CHALFONT_JOBS=5 bash scripts/chalfont/run_chalfont_pipeline.sh tc all
+for d in inhouse chalfont; do
+  python scripts/v2/prep_subject_features.py --dataset $d
+  python scripts/v2/analyze_v2.py --dataset $d
+  python scripts/v2/multimetric_comparison.py --dataset $d
+done
+```
+
+## Figures and tests
+
+```bash
+python scripts/make_manuscript_figures.py      # Figs 1-5, S1-S3 (writes to manuscript/figures/, private)
+python -m pytest -q tests
+```
+
+## Expected runtime
 
 | Stage | Time |
 |-------|------|
-| Step 1 (build normative, one-time) | ~5 min |
-| Step 2 (zAI, all patients) | ~15 min |
-| Step 3 (clinical maps, all patients) | ~5 min |
-| Step 4 (figures) | ~3 min |
-| Step 5 (ROI discrimination) | <1 min |
-| **Pipeline A + B total** | **~30 min** |
+| Registration (197 subjects, 8 parallel) | hours |
+| Steps 01–06 in-house | ~40 min |
+| Thresholding methods M1–M13 (permutation) | ~5.5 h, single process |
+| Chalfont pipeline (99 patients, 5 jobs) + pseudo-controls | ~1.5 h |
+| v2 features + analysis, both cohorts | ~10 min |
 
-## What to check after each step
+## What to check
 
-- After step 1: `ls results_zscore/groups/F_20_39/` should list `mean_perfusion.nii.gz`, `sd_perfusion.nii.gz`, `consensus_parcellation.nii.gz`, `brain_mask.nii.gz`.
-- After step 2: `ls results_zscore/asymmetry/patients/` lists 15 patient subdirectories.
-- After step 3: `ls results_zscore/clinical/P013/` shows `*_clinical_lateralized_*.nii.gz`.
-- After step 4: `ls visual_analysis/*_zai_*.png` shows seven new PNGs (numbered 10–16).
-- After step 5: `cat ez_analysis_mdt/analysis_report.txt` shows the AUC summary.
+- `results_zscore/clinical/cohort_concordance.csv`: 7/13 agree at the clinical tier (balanced accuracy 0.55).
+- `ez_analysis_mdt/v2/chalfont/summary.csv`: `R_temporal_sign` 61/93; `R_temporal` calibrated 13 called, 12 correct.
+- `external_chalfont/results_zscore/lateralization/eval_primary_endpoint.txt`: 58/93, balanced accuracy 0.63; controls strong/moderate 37/66.
 
 ## Read next
 
-- [`01-overview.md`](01-overview.md) for the full pipeline diagram
-- Per-step detail: [`02-build-control-normative.md`](02-build-control-normative.md) … [`06-roi-discrimination.md`](06-roi-discrimination.md)
+- [`01-overview.md`](01-overview.md), [`03-compute-zai.md`](03-compute-zai.md), [`09-clinical-interpretation.md`](09-clinical-interpretation.md)
+- `docs/audit/METHODS_AUDIT_2026-10-20.md` for why the voxel-wise method fails and what the v2 estimators change

@@ -1,5 +1,8 @@
 # Ground Truth: EZ Lateralization
 
+> **2026-10-20:** labels are unchanged (L 8, R 5, B 2, U 2 among 17 patients; P024 post-resection). The audit showed that the direction class of the voxel-wise pipeline tracks the global CBF offset from the control band, so the hyperperfusion phenotype should not be read as a clinical finding; see `docs/audit/METHODS_AUDIT_2026-10-20.md`.
+
+
 This document explains how the epileptogenic zone (EZ) lateralization label was assigned for each of the 15 patients used to evaluate the asymmetry pipelines, and how that label is encoded in the codebase.
 
 ---

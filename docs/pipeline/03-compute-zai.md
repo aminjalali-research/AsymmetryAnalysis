@@ -17,7 +17,7 @@ matter at |z|≥1.96 instead of ~5 %). The canonical pipeline therefore first re
 every subject onto a flip-symmetric T1 template (FSL flirt+fnirt; see `symreg/` and
 `symreg/run_sym_pipeline.sh`) and runs the AI on the warped perfusion. Pass `--sym` so the
 script reads `symreg/sym_perf/<id>_perf_sym.nii.gz` (+ `_aparc_sym`) instead of the raw
-MNI data. After this fix the cohort flags **12.9 %** of GM (control leave-one-out 6.9 %).
+MNI data. After this fix the cohort flags **12.6 %** of GM (control leave-one-out 6.9 %; 12.9 % before the 2026-10-20 validity rule).
 Note the zAI itself is invariant to the `(L+R)/2` vs `(L+R)` denominator (the constant
 cancels in the z-score); only the percent-unit SD floor is in `(L+R)/2` units.
 
@@ -30,6 +30,14 @@ zAI(voxel) = (AI_patient − mean_AI_controls) / SD_AI_controls.
 This is the literature-standard zAI of Shang et al. (2021), Boscolo Galazzo et al. (2016), and Gennari et al. (2025). The audit at `docs/superpowers/audits/2026-05-04-control_asymmetry_zscore-audit.md` confirms this implementation correctly reproduces the published methodology.
 
 **Why this and not raw z-scores.** Raw perfusion z-scores (step 1's by-product) answer "is this spot's blood flow abnormal?" — they yield scattered, bilateral, often diffuse results. zAI answers "is this spot's *left-vs-right* difference abnormal?" — yielding lateralized clusters that align with the clinical question.
+
+## Validity rule, floor and clusters (2026-10-20)
+
+- AI is defined only where **both** the voxel and its mirror have positive perfusion. Before this rule a one-sided zero produced |AI| ≈ 200 % and saturated the ±20 clip at coverage edges; now no gray-matter voxel reaches the clip (peak |zAI| 5.9–9.2 per patient).
+- The control SD is floored at 5 % AI. The code also takes the voxel-wise maximum of the SD map and its mirror; because every AI map is exactly antisymmetric this is a no-op and the floor is the only active correction.
+- Clusters are formed at |zAI| ≥ 1.96 with ≥ 50 voxels (`--threshold`, `--min-cluster`). The reporting tiers of step 6 keep a cluster when its **peak** |zAI| reaches the tier value (3 / 4 / 5) and its extent at 1.96 reaches the tier size (50 / 100 / 200 / 610 voxels). `03_clinical_maps.py` draws its maps at a voxel threshold of 3.
+- Noise budget: the control SD of AI is 55–70 % in gray matter at this resolution, so a 10–20 % physiological asymmetry cannot reach |zAI| ≥ 4; see `docs/audit/METHODS_AUDIT_2026-10-20.md` and `scripts/v2/` for the regional and smoothed estimators that address this.
+- `--dataset chalfont` runs the same code on the external cohort; `--pseudo-controls` scores every control leave-one-out as a pseudo-patient (used for calibration and control false-positive rates).
 
 ## Script
 

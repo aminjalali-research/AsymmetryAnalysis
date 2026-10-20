@@ -74,3 +74,18 @@ One row per `.py` script at the repo root. **All 34 scripts have been assigned a
 | **Total** | 34 |
 
 The next phase is **post-pruning cleanup** — see `.claude/NEXT.md` for the follow-up tasks (method extraction, manuscript pivot, file renames, archive moves, etc.).
+
+## Added 2026-10-20 (not part of the pruning inventory above)
+
+| Script | Purpose | Outputs |
+| --- | --- | --- |
+| `scripts/run_capped.sh` | memory-capped, detached execution of long runs | log file |
+| `dataset_config.py`, `scripts/chalfont/*` | external cohort (Chalfont): staging, QC, atlas, registration, pipeline runner, calibration, evaluation | `external_chalfont/` |
+| `scripts/v2/prep_subject_features.py` | ROI means + 8-mm smoothed maps on a mirror-symmetric grid | `v2_features/<dataset>/` |
+| `scripts/v2/analyze_v2.py` | regional normative z, smoothed z-mass, leave-one-out calibration | `ez_analysis_mdt/v2/<dataset>/` |
+| `scripts/v2/multimetric_comparison.py` | all metrics + Pareto front per method | `multimetric_comparison.csv` |
+| `scripts/v2/advanced_lateralization.py` | exploratory covariate model, antisymmetric classifier, lobe localization | `advanced_*.csv` |
+| `scripts/audit/voxel_noise_budget.py`, `regional_normative_prototype.py` | noise budget by scale; regional LI SD | printed tables, `audit_control_roi_li.csv` |
+| `scripts/make_manuscript_figures.py` | Figs 1–5 and S1–S3 | `manuscript/figures/` (private) |
+
+Findings and decisions: `docs/audit/METHODS_AUDIT_2026-10-20.md`.

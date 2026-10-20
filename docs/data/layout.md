@@ -1,5 +1,8 @@
 # Data Layout
 
+> **2026-10-20:** the current cohort is 17 patients (P013–P030, P014 excluded) and 180 HCP controls in three sex-pooled bands (`FM_20_39`, `FM_40_59`, `FM_60_79`); the per-sex directories described below do not exist. An external cohort lives under `external_chalfont/` (see `scripts/chalfont/` and `README.md`). See `CLAUDE.md` for the authoritative state.
+
+
 This document describes every on-disk dataset used by the canonical pipeline. It serves two audiences:
 
 - **Open-source visitor** — to understand what data each script consumes and what it produces.
