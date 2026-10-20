@@ -164,3 +164,8 @@ Stages 0–4 completed 2026-10-20 12:30 (`external_chalfont/results_zscore/clini
 6. **Acquisition and QC:** record time since last seizure and medication; use the multi-PLD ATT map to flag vascular/transit artifacts that masquerade as asymmetry; analyze P024 separately.
 7. **Clinical output:** a one-page report with (a) per-ROI z table with control reference ranges, (b) one smoothed asymmetry map at the calibrated threshold, (c) the subject's global CBF and calibration (fraction of GM beyond the control 95 % range), and (d) an explicit "no lateralizing abnormality" call when nothing passes the calibrated threshold.
 8. **Validate on the pre-specified Chalfont endpoint** before any claim; report balanced accuracy with the majority baseline and the control false-positive rate every time.
+
+## 9. Advanced-method spike (2026-10-20)
+
+`scripts/v2/advanced_lateralization.py`: covariate-adjusted regional normative model (age, sex, global GM CBF), antisymmetric L2 logistic regression over 37 LI z and 37 per-side relative-CBF z with mirror augmentation and no intercept (nested LOO), zero-shot transfer to the in-house scanner, and lobe-level localization. Result: 55–59/93 (balanced accuracy 0.59–0.63) versus 60/93 for the untrained temporal mean z; calibrated calls degenerate (control score range wider than patients); transfer 3–6/13; lobe localization 25 % vs 68 % majority. Conclusion: the statistical model is not the bottleneck; ASL signal, reference-standard quality and modality are. Full reasoning and the recommended path: `docs/superpowers/specs/2026-10-20-advanced-lateralization-design.md` (private).
+
