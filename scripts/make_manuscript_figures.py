@@ -523,7 +523,9 @@ def figS_workflow():
         ["voxel_noise_budget.py [fwhm]: control SD of AI by region and scale",
          "regional_normative_prototype.py: ROI LI SD, leave-one-out false positives",
          "symreg/check_full_calibration.py: GM % |z_AI| >= 1.96 per patient",
-         "docs/audit/METHODS_AUDIT_2026-10-20.md: findings and decisions"], ROSE, ROSE_H)
+         "perfusion_z_lateralization.py --dataset: analysis 3 (CBF z) on its own,",
+         "   lobe-level localization of analyses 3 and 4  ->  ez_analysis_mdt/perfz/",
+         "docs/audit/METHODS_AUDIT_2026-10-20.md: findings and decisions"], ROSE, ROSE_H, fs=5.2)
     box(51, 8, 47, 11.5, "Manuscript outputs (scripts/make_manuscript_figures.py)",
         ["Fig. 1 framework; Fig. 2 calibration; Fig. 3 cases (asymmetry/patients",
          "   + T1_sym); Fig. 4 enhanced estimator (v2 CSVs); Fig. 5 external cohort;",
@@ -538,11 +540,80 @@ def figS_workflow():
     plt.close(fig)
 
 
+def fig5_sens_spec():
+    """Fig. 5: sensitivity (patients called on the correct side) against control false positives over
+    every threshold, precision of calls against coverage, and lobe-level localization against the
+    always-temporal prior, for both cohorts. Data: ez_analysis_mdt/audit/sens_spec/<dataset>_curves.csv,
+    ez_analysis_mdt/perfz/<dataset>/localization.csv, ez_analysis_mdt/v2/chalfont/advanced_localization_li.csv."""
+    plt.rcParams.update({"font.family": ["Liberation Sans", "DejaVu Sans"]})
+    SS = BASE / "ez_analysis_mdt/audit/sens_spec"; PZ = BASE / "ez_analysis_mdt/perfz"
+    INK, MUTED = "#1f1f1f", "#6b6b6b"
+    STATS = [("regional temporal z-bar", "regional temporal $\\bar{z}$", "#2b6cb0"),
+             ("regional all-37 z-bar", "regional all-37 $\\bar{z}$", "#1a9850"),
+             ("smoothed z-mass LI (all GM)", "smoothed z-mass LI", "#c05621"),
+             ("perfusion z, temporal mean difference (analysis 3)", "perfusion $z$ (analysis 3)", "#7b4ea3")]
+    THESIS = {"chalfont": dict(sens=26 / 93, fp=0.35, call=36 / 93, acc=26 / 36), "inhouse": dict(sens=5 / 13, fp=0.73, call=9 / 13, acc=5 / 9)}
+    fig, axes = plt.subplots(2, 3, figsize=(7.2, 4.9), gridspec_kw={"width_ratios": [1.15, 1.15, 1]})
+    for r, (ds, title) in enumerate([("chalfont", "Chalfont: 93 patients, 66 same-scanner controls"), ("inhouse", "In-house: 13 patients, 180 HCP controls")]):
+        C = pd.read_csv(SS / f"{ds}_curves.csv")
+        ax = axes[r, 0]
+        for key, lab, col in STATS:
+            c = C[C.statistic == key].sort_values("spec")
+            if len(c) == 0:
+                continue
+            ax.plot(1 - c.spec, c.sens, color=col, lw=1.2, label=lab, drawstyle="steps-post")
+            cal = c[c.spec >= 0.94]
+            if len(cal) and key.startswith("regional temporal"):
+                k = cal.sens.idxmax(); ax.scatter([1 - c.loc[k, "spec"]], [c.loc[k, "sens"]], s=18, color=col, zorder=5)
+                ax.annotate("calibrated call\n(5% FP)", (1 - c.loc[k, "spec"], c.loc[k, "sens"]), (0.22, 0.42 if r == 0 else 0.5), fontsize=5.6, color=MUTED, arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.6))
+        th = THESIS[ds]; ax.scatter([th["fp"]], [th["sens"]], marker="D", s=22, color="#6b6b6b", zorder=6, label="thesis rule, |AI| $\\geq$ 10% (fixed)")
+        ax.plot([0, 1], [0, 1], color="#bdbdbd", lw=0.7, ls=(0, (3, 2)))
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.set_xlabel("1 $-$ specificity (controls called)", fontsize=6.5); ax.set_ylabel("sensitivity (correct-side calls)", fontsize=6.5)
+        ax.set_title(title, fontsize=6.8, loc="left", color=INK, pad=3)
+        ax = axes[r, 1]
+        for key, lab, col in STATS:
+            c = C[C.statistic == key].sort_values("call_rate")
+            if len(c) == 0:
+                continue
+            ax.plot(c.call_rate, c.side_acc, color=col, lw=1.2, drawstyle="steps-post")
+        ax.scatter([th["call"]], [th["acc"]], marker="D", s=22, color="#6b6b6b", zorder=6)
+        ax.axhline(0.5, color="#bdbdbd", lw=0.7, ls=(0, (3, 2)))
+        ax.set_xlim(0, 1); ax.set_ylim(0.3, 1.02); ax.set_xlabel("call rate in patients", fontsize=6.5); ax.set_ylabel("side accuracy among called", fontsize=6.5)
+        ax.set_title("precision of calls against coverage", fontsize=6.8, loc="left", color=INK, pad=3)
+        # localization bars
+        ax = axes[r, 2]
+        L = pd.read_csv(PZ / ds / "localization.csv"); L = L[L.basis == "true side"]
+        bars = [("asymmetry\nmap", L[L.method == "#4 |zAI|>=1.96"].iloc[0], "#2b6cb0"), ("perfusion\n$z$", L[L.method == "#3 raw"].iloc[0], "#7b4ea3")]
+        if ds == "chalfont":
+            A = pd.read_csv(BASE / "ez_analysis_mdt/v2/chalfont/advanced_localization_li.csv"); A = A[A.ez_lobe.isin(["temporal", "frontal", "parietal", "occipital"])]
+            bars.append(("regional\n$\\bar{z}$", dict(hits=int((A.ez_lobe == A.pred_lobe).sum()), n=len(A)), "#1a9850"))
+        n = int(bars[0][1]["n"]); base = int(str(bars[0][1]["majority_lobe"]).split()[1].split("/")[0])
+        labs = [b[0] for b in bars] + ["always\ntemporal"]; vals = [b[1]["hits"] / n for b in bars] + [base / n]; cols = [b[2] for b in bars] + ["#bdbdbd"]
+        ax.bar(range(len(vals)), vals, color=cols, width=0.65)
+        for i, (v, b) in enumerate(zip(vals, bars + [None])):
+            h = b[1]["hits"] if b else base; ax.text(i, v + 0.02, f"{h}/{n}", ha="center", fontsize=6, color=INK)
+        ax.set_xticks(range(len(vals))); ax.set_xticklabels(labs, fontsize=6); ax.set_ylim(0, 1); ax.set_ylabel("clinical lobe named on the clinical side", fontsize=6.2)
+        ax.set_title(f"lobe-level localization ({n} single-lobe patients)", fontsize=6.8, loc="left", color=INK, pad=3)
+        for a in axes[r]:
+            a.tick_params(labelsize=6, length=2, color="#9a9a9a")
+            for sp in ("top", "right"): a.spines[sp].set_visible(False)
+            for sp in ("left", "bottom"): a.spines[sp].set_color("#9a9a9a")
+    h, l = axes[0, 0].get_legend_handles_labels()
+    fig.legend(h, l, fontsize=6.2, frameon=False, loc="lower center", bbox_to_anchor=(0.5, -0.005), ncol=5, handletextpad=0.5, columnspacing=1.0)
+    for i, a in enumerate(axes.flat):
+        a.text(-0.16, 1.07, "abcdef"[i], transform=a.transAxes, fontsize=8, fontweight="bold", color=INK)
+    plt.tight_layout(h_pad=1.4, w_pad=1.2, rect=(0, 0.05, 1, 1))
+    fig.savefig(FIG / "fig5_sens_spec.png", dpi=300, bbox_inches="tight")
+    fig.savefig(FIG / "fig5_sens_spec.pdf", bbox_inches="tight")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     fig1_schematic()
     figS_workflow()
     fig4_enhanced()
     fig5_external_cohort()
+    fig5_sens_spec()
     fig2_calibration()
     fig3_cases([("P029", "left TLE\nhyperperfusion, concordant"),
                 ("P016", "right TLE, MRI-negative\nhypoperfusion, concordant"),

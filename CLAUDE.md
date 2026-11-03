@@ -19,8 +19,11 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   flip-symmetric T1 template. Calibration: GM %|zAI|≥1.96 = **12.6%** (was 31.5% in plain MNI; 12.9% before the 2026-10-20 validity-rule rerun); controls
   leave-one-out 6.9%. Original-space outputs archived in `_archived_origspace_zai_20260622/`.
 - **zAI maps are antisymmetric → every cluster is a mirrored pair.** Count and vote with one member per
-  pair (`cluster_hemi == ez_side_pred`). Pair counts: cohort 698 hypo / 556 hyper / 3915 subtle / 1 mixed;
-  P015 106 hyper / 6 hypo; P027 151 hypo / 2 hyper. Older numbers (229/14, 7785/1406/1180/3) are double counts.
+  pair (`cluster_hemi == ez_side_pred`). Pair counts (clusters at |zAI| ≥ 1.96, ≥ 50 vox; verified 2026-11-03): cohort
+  698 hypo / 562 hyper / 3883 subtle / 2 mixed, median 313 pairs per patient (128–399); research tier (peak ≥ 3): 688 / 442 /
+  3421 / 2, median 275 (90–373). P015 107 hyper / 6 hypo; P027 151 hypo / 2 hyper. The per-patient volumes in the manuscript
+  (tab:perpatient, P029 10.4 vs 2.9 cm³) are 1.96-cluster volumes, not research-tier ones. Older numbers (229/14,
+  7785/1406/1180/3, 698/556/3915/1) are double counts or stale.
 - **Headline results (honest, after the 2026-10-20 validity-rule rerun):**
   - Regional (Pipeline A) best AUC 0.60 (95% CI 0.28–0.90); leave-one-out 8/13 = always-left baseline.
   - Voxel-wise primary rule (clinical tier): 7/13 agree (P013, P016, P017, P023, P024, P026, P029), balanced
@@ -29,6 +32,12 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   - Chalfont (93 unilateral, 66 same-scanner controls): primary rule 58/93 (0.63) but 56 % of LOO controls get a
     strong/moderate call; regional normative temporal z 61/93 (0.65, AUC 0.69), calibrated calls 12/13 at 6 % FP.
   - Voxel noise budget: control SD of AI 55–70 % at 0.8 mm → |zAI|=4 needs >200 % asymmetry (docs/audit/).
+  - Protocol check (2026-11-03, Winston note: #1 region LI, #2 voxel AI, #3 CBF z vs controls, #4 z of AI): all four exist; #3 was only
+    used for the direction class until `scripts/audit/perfusion_z_lateralization.py` (→ `ez_analysis_mdt/perfz/`). #3 hypo-volume side:
+    Chalfont 59/93 (bal. 0.63), calibrated 11/13 at 6 % control FP; in-house 6–10/13 (in-sample sign rules, CI 0.50–0.92). Lobe-level
+    localization on the true side is below the always-temporal baseline for every method (Chalfont: #4 28/72, #3 35/72, regional 18/72 vs 49/72;
+    in-house 1–2/13): the largest abnormality lands frontal. Deviations from the note: Chalfont uses a fixed template atlas (no FreeSurfer);
+    the symmetric template is study-specific, not MNI-sym.
 - **Manuscript (private, `manuscript/`, gitignored):** targets *Clinical Neurophysiology* (prototype:
   Scarabello et al. 2026, Clin Neurophysiol 191:2112368). Title: "Normative voxel-wise arterial spin
   labeling asymmetry for lateralizing the epileptogenic zone in drug-resistant focal epilepsy". Synced to
@@ -39,12 +48,33 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   never add a reference without a PMID/DOI check. Old NeuroImage:Clinical version in `manuscript/_archive/`.
   Ethics: Queen's HSREB DMED-2472-21. Funding: SEAMO SEA-24-011.
   Open (authors): co-author approval of CRediT roles; name of the person who assigned MDT certainty grades.
+- **Manuscript state (2026-11-03, journal limits met):** 4,994 words of main-text prose (counter `ms/wc.py` in the
+  2026-11-03 session scratchpad: floats/captions excluded, `\%` handled), 5 tables + 5 figures in the article, 50 references
+  (all cited), reference list at the end of the article, supplement after it (S1–S14). Fig. 5 is now the sensitivity/specificity/
+  localization figure (`fig5_sens_spec`, `scripts/make_manuscript_figures.py::fig5_sens_spec`); the external-cohort schematic
+  moved to the supplement (`fig5_external_cohort` → Fig. S4). Content added 2026-11-03: analysis-plan paragraph (#1–#4, two
+  deviations), `sec:perfz` / `sec:perfz_results` (analysis 3, lobe localization), analysis-3 rows in `tab:enhanced`, detection-AUC
+  sentence + thesis-rule result in Results, 2023–2026 literature paragraph in Discussion (5 new verified refs: zhang2025cbm,
+  kershaw2025zai, jin2023harmonization, ndagijimana2026hippocampal, ripart2025aidhs; dropped pustina2015, marquand2016,
+  huber1981, leys2013, worsley1996 + 9 earlier), supplement sections S8 alternative rules, S9 pipelines vs visual, S10 multivariate
+  + methods table, S11 per-patient table, S12 strategies tested, S13 workflow/pseudocode (Algorithm S6), S14 case montages.
+  Abstract 250 words incl. labels, 3 highlights ≤ 130 chars. Build: `conda run -n tex tectonic manuscript/Manuscript_Complete.tex`
+  → 32 pages, no undefined refs. **Overleaf:** the user copies files there (own instruction 2026-11-03); the Overleaf copy had
+  drifted (see memory), so copy local → Overleaf only.
+- **Audit 2026-11-03 (thesis, sensitivity/specificity, literature):** `docs/audit/METHODS_AUDIT_2026-10-20.md` §10–12 +
+  `docs/audit/LITERATURE_ASYMMETRY_METHODS_2023_2026.md` (70 PubMed-verified records). Scripts: `scripts/audit/thesis_roi_rule.py`
+  (|AI| ≥ 10 rule: flags 35 % of Chalfont and 73 % of HCP controls), `scripts/audit/sens_spec_operating_points.py` (detection AUC
+  0.45–0.55 on Chalfont for every statistic → no threshold with sens and spec both > 0.5; at spec 0.80 sens 0.19–0.25),
+  `scripts/audit/strategies_2023_2026.py` (per-side Youden cut-offs collapse to always calling; PASCOM-style peak-cluster rule calls
+  88/93 patients and 92 % of controls). Outputs under `ez_analysis_mdt/audit/`. Deck slides 31–34 carry these (43 slides total).
 - **Manuscript state (2026-10-20):** 33 pages; Figs 1–5 + Appendix B (workflow figure, file table, Algorithms 1–5) + Appendix C
   (z-map montages S1a/S1b/S2, `case_montage` in `scripts/make_manuscript_figures.py`, 3× upsampled, PDF includes); notation
   section (`sec:notation`); multi-metric table (`tab:enhanced`), method comparison (`tab:method_comparison`), external rule
   grid (`tab:rules_external`), noise budget, demographics; references pruned to cited PMID/DOI-verified entries. Deck:
-  `AsymmetryAnalysis.pptx` (21 slides incl. neurologist questions 18–20; build script in the session scratchpad; original
-  kept as `AsymmetryAnalysis_backup_20261020.pptx`).
+  `AsymmetryAnalysis.pptx` (43 slides, 2026-11-03: protocol-compliance table, method #3 vs #4 maps, #3 lateralization table, localization audit, thesis compliance, sensitivity/specificity figure, 2023–2026 literature and tested strategies added; 2026-10-23: 14 visual-explainer slides added — voxel/mirror walkthrough, control normative,
+  distributions, calibration %, experiment distributions, noise budget, clusters/tiers, 13 thresholding methods on P016 (3 slides, rule +
+  cutoff histogram + improvement each), Pipeline A, direction rule, v2 estimator, improvements map; neurologist questions 36–38; build = `build_deck.js` + `add_questions.py` in the session scratchpad). Single file,
+  no backup copies (user rule).
 - **Never push** `manuscript/`, `docs/manuscript/`, `docs/superpowers/` (private).
 
 ## Key directories

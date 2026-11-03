@@ -177,3 +177,134 @@ Fixed after review: rounded threshold in `multimetric_comparison.py` (all-37 cal
 
 `scripts/v2/advanced_lateralization.py`: covariate-adjusted regional normative model (age, sex, global GM CBF), antisymmetric L2 logistic regression over 37 LI z and 37 per-side relative-CBF z with mirror augmentation and no intercept (nested LOO), zero-shot transfer to the in-house scanner, and lobe-level localization. Result: 55–59/93 (balanced accuracy 0.59–0.63) versus 60/93 for the untrained temporal mean z; calibrated calls degenerate (control score range wider than patients); transfer 3–6/13; lobe localization 25 % vs 68 % majority. Conclusion: the statistical model is not the bottleneck; ASL signal, reference-standard quality and modality are. Full reasoning and the recommended path: `docs/superpowers/specs/2026-10-20-advanced-lateralization-design.md` (private).
 
+
+## 10. Protocol compliance, analysis 3 on its own, and lobe-level localization (2026-11-03)
+
+The study's analysis plan (Winston's protocol note) lists four analyses on one registration chain (ASL → T1 → symmetric
+template): (1) region LI on the FreeSurfer parcellation, (2) voxel-wise AI in symmetric space, (3) voxel-wise z of CBF
+against controls, (4) z of the voxel-wise AI. Status: all four exist. Deviations: Chalfont has no FreeSurfer parcellation
+(fixed template atlas); the symmetric template is study specific, not a published symmetric MNI atlas. Analysis 3 had
+only fed the direction class until `scripts/audit/perfusion_z_lateralization.py --dataset inhouse|chalfont`
+(→ `ez_analysis_mdt/perfz/<dataset>/{summary,localization,localization_per_patient,localization_lobe_fraction}.csv`).
+
+| Rule (analysis 3, 37-ROI gray matter) | Chalfont (93 unilateral; 66 LOO controls) | In-house (13; HCP controls) |
+|---|---|---|
+| side with more hypoperfused voxels (z ≤ −2) | 59/93, bal. 0.63, AUC 0.64 (0.53–0.76), binomial p = 0.04 | 6/13 (0.45) |
+| same, temporal lobe only | 58/93 (0.62) | 8/13 |
+| sign of mean-z difference, temporal | 58/93 (0.62) | 10/13 (0.78; Wilson 0.50–0.92, in-sample) |
+| calibrated call (95th pct of \|d\| in LOO controls; 6 % FP) | 13 called, 11 correct (LR+ 5.1, κ 0.70) | 4 called, 3 correct |
+| offset-corrected (z − median GM z), hypo volume | 54/93 (0.58) | 6/13 |
+| reference: analysis 4 primary rule / regional z̄_temporal / majority | 58/93 / 61/93 (calibrated 12/13) / 50/93 | 7/13 / 8/13 / 8/13 |
+
+Lobe-level localization (patients with one clinical lobe; lobe with the most abnormal voxels on the clinical side):
+
+| Method | Chalfont (72: 49 temporal, 21 frontal, 1 parietal, 1 occipital) | In-house (13) |
+|---|---|---|
+| analysis 4, \|zAI\| ≥ 1.96 | 28/72 (frontal named in 57; temporal patients 9/49, frontal patients 19/21) | 2/13 (P024, P029) |
+| analysis 3, z ≤ −2 (raw / offset-corrected) | 35/72 / 34/72 (frontal named in 45) | 1/13 |
+| regional z̄, most negative lobe on the predicted side | 18/72 | — |
+| counts divided by lobe size (analysis 3) | 23/72 | 2/13 |
+| always "temporal" | 49/72 | 12/13 |
+
+Reading: analysis 3 lateralizes like analysis 4 and below the regional statistic; in-house it is confounded by the global
+offset (P027, P023: largest negative offsets, > 29 k hypoperfused voxels per hemisphere, wrong side). No map localizes:
+antisymmetry (a cluster carries no side), boundary/noise voxels collected by the largest lobe, and the offset in analysis 3.
+Localize only after a calibrated side call, at the regional scale, with per-region control false-positive rates.
+
+Manuscript (2026-11-03): analysis-plan paragraph, `sec:perfz`, `sec:perfz_results`, rows in `tab:enhanced`,
+`tab:method_comparison`, `tab:reading`, Algorithm 6, file-table row. Cluster-pair counts in the Results were relabelled:
+698/562/2/3883 (median 313 per patient, 128–399) are the counts of all 1.96 clusters, not of the research tier
+(688/442/2/3421; median 275, 90–373); the per-patient volumes in the table are 1.96-cluster volumes.
+
+## 11. Thesis compliance, and why sensitivity and specificity cannot both be reasonable (2026-11-03)
+
+**Did we follow the thesis (Rai 2026, `manuscript/Thesis.pdf`, Methods pp. 55–58)?** The thesis specifies (a) a ROI
+analysis: AI = 100 (L − R)/(L + R) of mean CBF in 36 FreeSurfer regions (ASL registered to T1, 0.8 mm), |AI| ≥ 10 read as
+significant (threshold taken from Hauf 2009 / Lim 2008), compared with the MDT lateralization; and (b) a voxel-wise
+analysis: z = (patient CBF − control mean)/control SD against 60 age-matched HCP controls (3 sex-pooled bands built from
+12 age × sex strata of 15), |z| ≥ 1.96 with an extent threshold K_E = 100 voxels, clusters read visually on the T1 with the
+aparc+aseg overlay. The thesis reports reader-judged usefulness (voxel-wise "useful" in 7/13 unilateral patients, 6 hypo-
+and 1 hyperperfused) and no sensitivity or specificity of its own; its discussion asks for subject-specific thresholds
+and notes outliers in hyperperfused clusters and z-scores "beyond physiologically plausible ranges".
+
+| Thesis step | Our implementation | Followed? |
+|---|---|---|
+| ROI AI, 36 regions, |AI| ≥ 10 | same AI on 37 pairs (thesis 36 + thalamus); the fixed |AI| ≥ 10 rule was never scored until today (`scripts/audit/thesis_roi_rule.py`); Pipeline A used ROC-fitted aggregations instead | partly |
+| voxel z of CBF vs controls, |z| ≥ 1.96, K_E 100, visual reading | computed in step 01 (analysis 3) but used only for the direction class until 2026-11-03; our primary voxel analysis is the asymmetry z (analysis 4, Winston note) | partly (deviation justified by the note) |
+| controls: 3 bands × 60, sex-pooled | same bands (`FM_20_39/40_59/60_79`) | yes |
+| MNI space, 0.8 mm upsampling | MNI 0.8 mm plus flip-symmetric template registration (calibration 31 % → 13 %) | deviation, justified |
+| reader judgement of usefulness | replaced by explicit rules, balanced accuracy, control false-positive rates | deviation, intended |
+
+**The thesis ROI rule scored explicitly** (side with more hypoperfused regions at |AI| ≥ 10; `ez_analysis_mdt/audit/thesis_roi_rule/`):
+
+| Scope | Chalfont (93 pat., 66 ctl) | In-house (13 pat., 180 HCP ctl) |
+|---|---|---|
+| temporal (10 pairs) | called 36/93, correct 26 (side acc. 0.72), balanced 0.28; **35 % of controls have a flagged temporal region** | called 9/13, correct 5 (0.56); **73 % of controls flagged** |
+| all 37 pairs | called 64/93, correct 39 (0.61), balanced 0.42; 59 % of controls flagged | called 12/13, correct 7 (0.58); 91 % of controls flagged |
+
+A 10 % asymmetry is about one control SD of a regional LI (SD 0.045–0.05 → AI SD ≈ 9–10 %), so with 10 temporal regions
+most healthy subjects exceed it somewhere; the threshold is a PET/SPECT convention that does not transfer to ASL region means.
+
+**Sensitivity and specificity over the whole threshold range** (`scripts/audit/sens_spec_operating_points.py` →
+`ez_analysis_mdt/audit/sens_spec/`; sensitivity = patients called on the correct side, specificity = leave-one-out
+controls not called, detection AUC = |statistic| of patients vs controls):
+
+| Statistic | Chalfont detection AUC (95 % CI) | always call: sens / side acc. | at spec 0.80: sens (side acc.) | at spec 0.90: sens (side acc.) | In-house detection AUC |
+|---|---|---|---|---|---|
+| regional temporal z̄ | 0.53 (0.44–0.62) | 0.66 / 0.66 | 0.20 (0.73) | 0.17 (0.80) | 0.53 |
+| regional all-37 z̄ | 0.55 (0.45–0.64) | 0.65 / 0.65 | 0.25 (0.82) | 0.17 (0.89) | 0.60 |
+| regional mesial z̄ | 0.48 (0.39–0.56) | 0.65 / 0.65 | 0.16 (0.65) | 0.09 (0.57) | 0.49 |
+| smoothed z-mass LI (all GM) | 0.45 (0.36–0.54) | 0.63 / 0.63 | 0.19 (0.90) | 0.11 (1.00) | 0.51 |
+| smoothed z-mass LI (temporal) | 0.50 (0.41–0.59) | 0.57 / 0.57 | 0.16 (0.68) | 0.00 | 0.60 |
+| analysis 3, temporal mean-z difference | 0.51 (0.42–0.60) | 0.62 / 0.62 | 0.19 (0.78) | 0.16 (0.83) | 0.62 |
+| analysis 3, hypoperfused-volume LI | 0.45 (0.36–0.54) | 0.63 / 0.63 | 0.16 (0.94) | 0.11 (1.00) | 0.49 |
+
+**Reading.** No statistic has an operating point with sensitivity and specificity both above 0.5. The reason is not the
+rule but the signal: the *magnitude* of interictal asymmetry in patients is indistinguishable from the healthy range
+(detection AUC ≈ 0.5 in 93 patients with same-scanner controls), while the *sign* carries only a weak side signal
+(66 % correct, balanced accuracy 0.65). Every threshold therefore trades one error for the other: always calling gives
+sensitivity ≈ 0.65 at specificity 0; a 5 % false-positive threshold gives specificity 0.94 at sensitivity 0.13–0.17 (the
+"12 of 13 calibrated calls" of the manuscript). Methods tuning cannot manufacture a magnitude signal that is absent at
+this noise level (regional LI SD ≈ 0.05; interictal TLE hypoperfusion 10–20 %, i.e. 1–2 SD at best, 0.5–1 SD in most
+patients), against a clinical-hypothesis reference. The best available lateralizer remains the regional normative z̄
+(temporal or all-37) read by sign, with the calibrated call as a high-precision, low-coverage adjunct; the thesis rule
+and the voxel-wise cluster rules are dominated at every operating point.
+
+**What would raise both numbers** (evidence-based, not yet done): acquire closer to seizures or postictally
+(Gaxiola-Valdez 2017: postictal hypoperfusion localizes the SOZ), partial-volume and transit-time (multi-PLD ATT) corrected
+GM CBF, more averages or background suppression for SNR, outcome-defined (resection + Engel I) reference sides, and
+combination with structural asymmetry (hippocampal volume/FLAIR) or FDG-PET where available; see Section 12 for the
+2023–2026 literature comparison.
+
+## 12. What the 2023–2026 literature does differently (2026-11-03)
+
+Full survey with 70 PubMed-verified records (PMID + DOI), per-component comparison and a ranked list of strategies:
+`docs/audit/LITERATURE_ASYMMETRY_METHODS_2023_2026.md`. Headlines:
+
+- **No 2023–2026 ASL study reports both sensitivity and specificity for single-subject lateralization with a control
+  false-positive check.** The only ASL voxel-AI study (Mattioli 2026, children, n = 28) uses no controls and no numeric
+  threshold; its 92.9 % "concordance" is a reader's call, not a tested rule. Interictal perfusion gives a confident
+  lateralization rarely wherever it is measured (interictal SPECT 4.5 % high-confidence calls, Baradaran-Salimi 2024;
+  PET surface z-map temporal sensitivity 0.41 at specificity 0.96 against SEEG, Han 2026), so our 14 % calibrated call
+  rate at 6 % FP is in line with the field.
+- **The methods that do reach sensitivity ≈ 0.87 / specificity ≈ 0.91** (Zhang 2025, PET, MRI-negative, resection +
+  outcome reference) share features we do not use: cortical-surface sampling at 50 % depth, 20-mm FWHM surface
+  smoothing, global-mean normalisation, same-scanner controls and a rank threshold (lowest 0.5 % of vertices) instead
+  of a fixed |z|. They are PET, not ASL.
+- **Structural asymmetry outperforms perfusion asymmetry by a wide margin:** hippocampal volume AI alone lateralizes
+  histological hippocampal sclerosis with AUC 0.95–0.96 at fixed cut-offs (Ndagijimana 2026, n = 442); asymmetry
+  features z-scored against controls with a logistic model reach 90 % sensitivity / 94 % specificity with external
+  validation (AID-HS, Ripart 2025). Our `aparc+aseg` files are in MNI space (227 × 272 × 227, 0.8 mm) for patients and
+  controls alike, so a native-space volume AI still needs the FreeSurfer `aseg.stats`; not done today.
+- **Global-level normalisation before any one-sided comparison** is standard (Rentzeperis 2023 GM-median; Han/Zhang
+  global mean) and Abdennadher 2026 states that asymmetry indices cannot separate a global shift from a focal one —
+  the mechanism behind our direction-class artefact (ρ = 0.87). Our offset-corrected analysis-3 variant is the additive
+  version and gave no lateralization gain (54/93).
+- **Harmonised or held-out controls** (Jin 2023: FCD detection 50 % → 71 % after resolution/global harmonisation and age
+  pruning; Qian 2026: 0 FP in 10 held-out controls) and **per-side ROC cut-offs** (Kershaw 2025: left sens 0.90 / spec
+  0.80, right 0.88 / 0.76 for a PET z-score asymmetry index) are the two transferable steps; both tested in
+  `scripts/audit/strategies_2023_2026.py` (results in Section 13).
+- **Not evidence of a better ASL method:** ML lateralization accuracies of 0.90–1.00 come from structural/diffusion
+  features in lesional TLE with small or split-sample validation; the Chen 2026 meta-analysis grades them at very high
+  risk of bias. MAP z-maps in truly MRI-negative patients reach balanced accuracy 51–60 % with 3–6× more false than
+  true positives (Fearns 2023) — the same profile as our voxel-wise maps.
