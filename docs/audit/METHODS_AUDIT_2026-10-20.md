@@ -308,3 +308,29 @@ Full survey with 70 PubMed-verified records (PMID + DOI), per-component comparis
   features in lesional TLE with small or split-sample validation; the Chen 2026 meta-analysis grades them at very high
   risk of bias. MAP z-maps in truly MRI-negative patients reach balanced accuracy 51–60 % with 3–6× more false than
   true positives (Fearns 2023) — the same profile as our voxel-wise maps.
+
+## 13. Search for an operating point with both sensitivity and specificity reasonable (2026-11-03)
+
+`scripts/audit/best_operating_points.py` → `ez_analysis_mdt/audit/best_operating_points/summary.csv`. For every candidate the
+best balanced operating point max_t min(sensitivity, specificity) is reported (sensitivity = patients called on the correct
+side, specificity = leave-one-out controls not called), with the detection AUC as the ceiling.
+
+| Candidate | Chalfont (93 / 66): best min(sens, spec) | In-house (13 / 180): best min(sens, spec) |
+|---|---|---|
+| regional temporal z̄ (single statistic) | 0.40 (sens 0.40, spec 0.41; detection AUC 0.53) | 0.45 (AUC 0.53) |
+| combined mean of 3 control-standardized statistics (regional z̄, smoothed z-mass, analysis-3 temporal difference) | 0.43 (AUC 0.50) | 0.48 (AUC 0.61) |
+| consensus of 3/3 signs + magnitude gate | 0.42 (85 % of controls also agree in sign) | 0.46 |
+| per-side Youden cut-offs, peak-cluster rule (§12) | collapse to always calling / 92 % control FP | — |
+| hippocampal volume AI from the MNI-space aparc+aseg | not available (no FreeSurfer) | 0.39 (AUC 0.53); fixed cut-offs ±0.07: 1 called |
+| amygdalar volume AI from the MNI-space aparc+aseg | — | 0.54 (AUC 0.74, n = 13; fixed cut-offs: 8 called, 4 correct, control FP 0.37) |
+| two-feature antisymmetric logistic (regional z̄ + hippocampal AI), leave-one-out | — | 0.23 |
+
+**Verdict.** No method on these data reaches sensitivity and specificity both ≥ 0.6; the best balanced point of any
+perfusion statistic is 0.40–0.48, which is what a detection AUC of 0.50–0.55 allows. The requirement cannot be met by
+changing rules, thresholds, combinations or priors derived from the existing images. It can only be met by changing the
+signal or the reference: (1) peri-ictal or postictal acquisition (Gaxiola-Valdez 2017), (2) partial-volume and transit-time
+corrected gray-matter CBF with more averages, (3) native-space hippocampal/amygdalar volumes (FreeSurfer `aseg.stats` or
+HippUnfold/AID-HS) as a structural prior — the MNI-space amygdala AI already shows the largest detection AUC of any feature
+tested (0.74, n = 13), (4) outcome-defined reference sides, and (5) surface-based z-maps with 20-mm smoothing for the
+in-house cohort, where HCP-ASL surface CBF exists. These are acquisition and segmentation steps, not analysis steps, and
+none can be run on today's data.

@@ -66,7 +66,10 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   (|AI| ≥ 10 rule: flags 35 % of Chalfont and 73 % of HCP controls), `scripts/audit/sens_spec_operating_points.py` (detection AUC
   0.45–0.55 on Chalfont for every statistic → no threshold with sens and spec both > 0.5; at spec 0.80 sens 0.19–0.25),
   `scripts/audit/strategies_2023_2026.py` (per-side Youden cut-offs collapse to always calling; PASCOM-style peak-cluster rule calls
-  88/93 patients and 92 % of controls). Outputs under `ez_analysis_mdt/audit/`. Deck slides 31–34 carry these (43 slides total).
+  88/93 patients and 92 % of controls), `scripts/audit/best_operating_points.py` (combined/consensus statistics and the MNI-space
+  hippocampal/amygdalar volume AI: best balanced point max_t min(sens, spec) 0.40–0.54 everywhere; **no method on today's
+  images reaches sens and spec both ≥ 0.6**; §13 lists what would: peri-ictal timing, PVC/ATT-corrected GM CBF, native-space
+  volumes, outcome labels, surface z-maps). Outputs under `ez_analysis_mdt/audit/`. Deck slides 31–34 carry these (43 slides).
 - **Manuscript state (2026-10-20):** 33 pages; Figs 1–5 + Appendix B (workflow figure, file table, Algorithms 1–5) + Appendix C
   (z-map montages S1a/S1b/S2, `case_montage` in `scripts/make_manuscript_figures.py`, 3× upsampled, PDF includes); notation
   section (`sec:notation`); multi-metric table (`tab:enhanced`), method comparison (`tab:method_comparison`), external rule
