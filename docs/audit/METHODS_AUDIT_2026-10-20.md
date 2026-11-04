@@ -321,16 +321,48 @@ side, specificity = leave-one-out controls not called), with the detection AUC a
 | combined mean of 3 control-standardized statistics (regional z̄, smoothed z-mass, analysis-3 temporal difference) | 0.43 (AUC 0.50) | 0.48 (AUC 0.61) |
 | consensus of 3/3 signs + magnitude gate | 0.42 (85 % of controls also agree in sign) | 0.46 |
 | per-side Youden cut-offs, peak-cluster rule (§12) | collapse to always calling / 92 % control FP | — |
-| hippocampal volume AI from the MNI-space aparc+aseg | not available (no FreeSurfer) | 0.39 (AUC 0.53); fixed cut-offs ±0.07: 1 called |
-| amygdalar volume AI from the MNI-space aparc+aseg | — | 0.54 (AUC 0.74, n = 13; fixed cut-offs: 8 called, 4 correct, control FP 0.37) |
-| two-feature antisymmetric logistic (regional z̄ + hippocampal AI), leave-one-out | — | 0.23 |
+| hippocampal volume AI (Chalfont: native FSL FIRST; in-house: MNI-space aparc+aseg) | 0.52 (sens 0.52, spec 0.53; detection AUC 0.70); sign 62/93, HS 16/18 | 0.39 (AUC 0.53); fixed cut-offs ±0.07: 1 called |
+| amygdalar volume AI (Chalfont: native FSL FIRST; in-house: MNI-space aparc+aseg) | 0.41 (AUC 0.52); sign 61/93 | 0.54 (AUC 0.74, n = 13; fixed cut-offs: 8 called, 4 correct, control FP 0.37) |
+| two-feature antisymmetric logistic (regional z̄ + hippocampal AI), leave-one-out | 0.51 (AUC 0.67); sign 64/93 | 0.23 |
 
 **Verdict.** No method on these data reaches sensitivity and specificity both ≥ 0.6; the best balanced point of any
 perfusion statistic is 0.40–0.48, which is what a detection AUC of 0.50–0.55 allows. The requirement cannot be met by
 changing rules, thresholds, combinations or priors derived from the existing images. It can only be met by changing the
 signal or the reference: (1) peri-ictal or postictal acquisition (Gaxiola-Valdez 2017), (2) partial-volume and transit-time
 corrected gray-matter CBF with more averages, (3) native-space hippocampal/amygdalar volumes (FreeSurfer `aseg.stats` or
-HippUnfold/AID-HS) as a structural prior — the MNI-space amygdala AI already shows the largest detection AUC of any feature
-tested (0.74, n = 13), (4) outcome-defined reference sides, and (5) surface-based z-maps with 20-mm smoothing for the
-in-house cohort, where HCP-ASL surface CBF exists. These are acquisition and segmentation steps, not analysis steps, and
-none can be run on today's data.
+HippUnfold/AID-HS) as a structural prior — tested on Chalfont with FSL FIRST below: detection AUC 0.70 but best balanced point
+0.52, so even the structural prior does not meet the requirement, (4) outcome-defined reference sides, and (5) surface-based z-maps with 20-mm smoothing for the
+in-house cohort, where HCP-ASL surface CBF exists. These are acquisition and segmentation steps, not analysis steps; only (3)
+could be run on today's data (Chalfont), and it did not reach the requirement either.
+
+**Structural prior, native space (run 2026-11-03 18:41–19:22, 170/170 segmentations, 0 failures).** The Chalfont staged T1
+(`external_chalfont/staged/<ID>/T1_brain.nii.gz`, 1 mm MPRAGE, native) was segmented with FSL FIRST (hippocampus and amygdala,
+`scripts/audit/first_volume_ai.sh`, 84 s per subject, 8 in parallel under `run_capped.sh`) and scored by
+`scripts/audit/volume_ai_chalfont.py` → `ez_analysis_mdt/audit/first_chalfont/{volume_ai,results}.csv` (93 unilateral patients,
+66 same-scanner controls; control hippocampal AI median −0.004, SD 0.052, 95th percentile |AI| 0.087).
+
+| Rule (Chalfont, n = 93) | Called | Correct | Side accuracy among called | Control FP | HS 18 | Other lesion 9 | MRI-neg 42 | Detection AUC |
+|---|---|---|---|---|---|---|---|---|
+| hippocampal volume AI, sign | 93 | 62 (0.67, CI 0.57–0.75; bal. 0.675) | 0.67 | — | 16/18 | 3/9 | 24/42 | 0.70 (0.62–0.78) |
+| hippocampal AI, calibrated 5 % FP (\|AI\| ≥ 0.087) | 31 | 24 | 0.77 | 0.06 | 11/13 | 2/4 | 1/4 | — |
+| hippocampal AI, Ndagijimana 2026 cut-offs (−0.071 / +0.061) | 41 | 32 | 0.78 | 0.14 | 13/15 | 2/4 | 4/9 | — |
+| amygdalar volume AI, sign | 93 | 61 (0.66) | 0.66 | — | 13/18 | 3/9 | 29/42 | 0.52 (0.43–0.61) |
+| sequential: volume call, else regional z̄ calibrated call | 37 | 30 | 0.81 | 0.12 | 11/13 | 2/4 | 6/9 | — |
+| sequential, then sign of regional z̄ (always calls) | 93 | 64 (0.69) | 0.69 | — | 14/18 | 4/9 | 28/42 | — |
+| two-feature logistic (volume AI + regional z̄), LOO, sign | 93 | 64 (0.69, CI 0.59–0.77; bal. 0.686) | 0.69 | — | 16/18 | 1/9 | 29/42 | 0.67 (0.59–0.75) |
+| two-feature logistic, calibrated 5 % FP | 27 | 22 | 0.81 | 0.06 | 9/11 | 1/2 | 3/5 | — |
+| reference: regional temporal z̄, sign | 93 | 61 (0.66) | 0.66 | — | 11/18 | 5/9 | 29/42 | 0.53 (0.44–0.62) |
+| reference: regional temporal z̄, calibrated | 13 | 12 | 0.92 | 0.06 | 3/3 | 0/1 | 6/6 | — |
+
+Reading: the native-space hippocampal volume AI is the first feature on Chalfont with a detection AUC clearly above chance
+(0.70), and it lateralizes hippocampal sclerosis as the literature says (16/18 by sign, 11/13 calibrated, 13/15 with the
+published cut-offs). Outside HS it is at the perfusion level (MRI-negative 24/42 by sign, 1/4 calibrated). Adding perfusion
+(sequential or two-feature logistic) raises the sign count from 62 to 64/93 and leaves the HS stratum unchanged, i.e. the
+perfusion statistic contributes nothing the volume does not already carry. The best balanced operating point of the volume AI
+is max_t min(sens, spec) = 0.52 (t = 0.028) and of the two-feature model 0.51, so the requirement "sensitivity and
+specificity both ≥ 0.6" is still not met: the structural prior adds specificity (0.94 at 31 calls, PPV 0.77) but not
+sensitivity, because 42/93 patients are MRI-negative and 21/93 are extratemporal. The in-house cohort cannot be tested this
+way: every in-house anatomical file (`T1w_acpc_dc_restore`, `aparc+aseg`, including the controls' `T1w/` copies) is already on
+the 227 × 272 × 227 MNI 0.8-mm grid, so its volumes are normalized; the MNI-space result above (hippocampal AI AUC 0.53,
+amygdalar 0.74, n = 13) is the best available in-house. Native FreeSurfer `aseg.stats` for the in-house subjects would be
+needed (`scripts/audit/first_volume_ai_inhouse.sh` exists but must not be run on these MNI-space files).

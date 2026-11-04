@@ -69,7 +69,11 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   88/93 patients and 92 % of controls), `scripts/audit/best_operating_points.py` (combined/consensus statistics and the MNI-space
   hippocampal/amygdalar volume AI: best balanced point max_t min(sens, spec) 0.40–0.54 everywhere; **no method on today's
   images reaches sens and spec both ≥ 0.6**; §13 lists what would: peri-ictal timing, PVC/ATT-corrected GM CBF, native-space
-  volumes, outcome labels, surface z-maps). Outputs under `ez_analysis_mdt/audit/`. Deck slides 31–34 carry these (43 slides).
+  volumes, outcome labels, surface z-maps). Native-space structural prior on Chalfont (`scripts/audit/first_volume_ai.sh` = FSL FIRST
+  on 170 staged T1s, 84 s each, `scripts/audit/volume_ai_chalfont.py` → `ez_analysis_mdt/audit/first_chalfont/`): hippocampal volume
+  AI detection AUC 0.70, sign 62/93 (HS 16/18, MRI-negative 24/42), calibrated 24/31 at 6 % FP, Ndagijimana cut-offs 32/41; adding
+  perfusion (sequential / two-feature LOO logistic) gives 64/93, HS unchanged; best balanced point 0.52 → requirement still unmet.
+  In-house anatomy is MNI-space, so `first_volume_ai_inhouse.sh` must not be run (volumes normalized). Outputs under `ez_analysis_mdt/audit/`. Deck slides 31–34 carry these (43 slides).
 - **Manuscript state (2026-10-20):** 33 pages; Figs 1–5 + Appendix B (workflow figure, file table, Algorithms 1–5) + Appendix C
   (z-map montages S1a/S1b/S2, `case_montage` in `scripts/make_manuscript_figures.py`, 3× upsampled, PDF includes); notation
   section (`sec:notation`); multi-metric table (`tab:enhanced`), method comparison (`tab:method_comparison`), external rule
