@@ -9,6 +9,9 @@ Covers:
   d. 06_clinical_interpretation.ClinicalInterpreter._mdt_concordance.
   e. src/thresholding M3/M4/M7 do not collapse to an empty mask when the
      zAI map contains a large block of zero (no-data) voxels.
+  f. interactive_viewer all-layer view (options 17-18, --subject/--all):
+     dataset from the ID, layer files for both layouts, peak voxel with zAI
+     fallback, FSLeyes command (centred, only template + clinical on), PNG.
 """
 
 import importlib.util
@@ -188,3 +191,68 @@ def test_ai_valid_requires_both_sides_positive():
     assert valid[2, 0, 0] and valid[3, 0, 0]
     assert np.all(np.abs(ai) <= 200.0 + 1e-9)   # |AI| is bounded when both sides > 0
     assert ai[0, 0, 0] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# f. interactive_viewer all-layer view
+# ---------------------------------------------------------------------------
+_VIEW_SHAPE = (12, 14, 10)
+
+
+def _view_save(path, data):
+    import nibabel as nib
+    path.parent.mkdir(parents=True, exist_ok=True)
+    nib.save(nib.Nifti1Image(data.astype(np.float32), np.diag([-0.8, 0.8, 0.8, 1])), str(path))
+
+
+def _view_tree(tmp, sid="D002", peak=(3, 5, 6), clinical=True):
+    """Minimal Chalfont layout: template, CBF, #3, #4, clinical map, atlas, concordance row."""
+    import interactive_viewer as iv
+    t1 = np.zeros(_VIEW_SHAPE); t1[2:10, 2:12, 2:8] = 100
+    _view_save(tmp / iv.SYM_T1, t1)
+    res = tmp / "external_chalfont/results_zscore"
+    _view_save(tmp / f"external_chalfont/sym_perf/{sid}_perf_sym.nii.gz", t1 * 0.5)
+    _view_save(res / f"patients/{sid}/{sid}_vs_CH_ALL_zscore.nii.gz", np.full(_VIEW_SHAPE, -2.5))
+    zai = np.zeros(_VIEW_SHAPE); zai[8, 8, 4] = -6.0
+    _view_save(res / f"asymmetry/patients/{sid}/{sid}_asymmetry_zscore.nii.gz", zai)
+    if clinical:
+        clin = np.zeros(_VIEW_SHAPE); clin[peak] = 4.3; clin[1, 1, 1] = -2.0
+        _view_save(res / f"clinical/{sid}/{sid}_clinical_zai_lateralized_significant.nii.gz", clin)
+    _view_save(tmp / "external_chalfont/atlas/consensus_parcellation_sym.nii.gz", np.ones(_VIEW_SHAPE))
+    (res / "clinical").mkdir(parents=True, exist_ok=True)
+    (res / "clinical/cohort_concordance.csv").write_text(
+        "patient_id,mdt_ez,mdt_confidence,algo_prediction,algo_confidence,concordance,top_lobe,top_voxels,peak_zai\n"
+        f"{sid},L,,B,Bilateral,disagree,L-parietal,582,4.33\n")
+    return tmp
+
+
+def test_all_layers_dataset_and_files(tmp_path):
+    import interactive_viewer as iv
+    assert iv.dataset_of("P016") == "inhouse" and iv.dataset_of("D002") == "chalfont"
+    v = iv.AllLayersView("D002", base=_view_tree(tmp_path))
+    assert v.band == "CH_ALL" and v.missing() == []
+    assert "reference L" in v.summary() and "B (Bilateral)" in v.summary()
+
+
+def test_all_layers_peak_voxel_and_fallback(tmp_path):
+    import interactive_viewer as iv
+    assert iv.AllLayersView("D002", base=_view_tree(tmp_path)).peak_voxel() == (3, 5, 6)
+    v = iv.AllLayersView("D002", base=_view_tree(tmp_path / "noclin", clinical=False))
+    assert v.peak_voxel() == (8, 8, 4)   # no clinical map: largest |zAI|
+
+
+def test_all_layers_fsleyes_command(tmp_path):
+    import interactive_viewer as iv
+    cmd = iv.AllLayersView("D002", base=_view_tree(tmp_path)).fsleyes_command((3, 5, 6))
+    assert cmd[:6] == ["fsleyes", "-vl", "3", "5", "6", iv.SYM_T1]
+    clin = next(i for i, c in enumerate(cmd) if c.endswith("lateralized_significant.nii.gz"))
+    assert "-d" not in cmd[clin:]          # clinical clusters visible
+    assert cmd.count("-d") == 4            # atlas, CBF, #3, #4 start hidden
+
+
+def test_all_layers_png(tmp_path):
+    import interactive_viewer as iv
+    v = iv.AllLayersView("D002", base=_view_tree(tmp_path, clinical=False))
+    out = v.render_png(v.peak_voxel(), tmp_path / "out" / "D002.png")
+    assert out.exists() and out.stat().st_size > 1000
+    assert v.missing() == ["clinical"]

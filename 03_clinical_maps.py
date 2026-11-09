@@ -848,7 +848,7 @@ def main():
 
             print(f"\n  # {pid} - lateralized zAI heatmap:")
             print(f"  fsleyes '{mean_f}' \\")
-            print(f"    '{lat_sig_f}' -cm brain_colours_diverging_bwr -dr -6 6 -a 80 "
+            print(f"    '{lat_sig_f}' -cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic -dr -6 6 -a 80 "
                   f"-n 'Lateralized zAI' &")
 
     print(f"\n{'='*70}")

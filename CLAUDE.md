@@ -48,7 +48,16 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   never add a reference without a PMID/DOI check. Old NeuroImage:Clinical version in `manuscript/_archive/`.
   Ethics: Queen's HSREB DMED-2472-21. Funding: SEAMO SEA-24-011.
   Open (authors): co-author approval of CRediT roles; name of the person who assigned MDT certainty grades.
-- **Manuscript state (2026-11-03, journal limits met):** 4,994 words of main-text prose (counter `ms/wc.py` in the
+- **Manuscript state (2026-11-04, journal limits met):** 4,987 words of main-text prose (`ms/wc.py` counter), 5 tables + 5 figures, 50 references
+  (glass1976primary dropped, patenaude2011first added, PMID 21352927), 36 pages, no undefined refs. The supplement lives INSIDE
+  `manuscript/Manuscript_Complete.tex` after the reference list (there is no Supplementary_Material.tex). Added 2026-11-04: Methods (iii)
+  structural prior + pointer sentences; Results paragraph on the uncorrected-flow map, FIRST volume prior, sequential rule 68/93, cluster-size
+  null 17/20, nested LOO, PVC, index forms; six new rows in `tab:enhanced` (Pareto marks moved to the sequential rule and the calibrated
+  post hoc calls); Discussion/Limitations/Conclusions sentences; new supplementary sections `sec:provenance`, `sec:registration_supp`,
+  `sec:indexform` (tab:indexform), `sec:flow_prior` (tab:flowprior, tab:improvements, tab:league) placed before the workflow section;
+  the 2023–2026 literature paragraph, the thesis-rule sentence, the localization details and the reader's LI scale (now in the
+  tab:reading caption) moved out of the main text to stay under 5,000 words. Build: `conda run -n tex tectonic manuscript/Manuscript_Complete.tex`.
+- **Manuscript state (2026-11-03, superseded):** 4,994 words of main-text prose (counter `ms/wc.py` in the
   2026-11-03 session scratchpad: floats/captions excluded, `\%` handled), 5 tables + 5 figures in the article, 50 references
   (all cited), reference list at the end of the article, supplement after it (S1–S14). Fig. 5 is now the sensitivity/specificity/
   localization figure (`fig5_sens_spec`, `scripts/make_manuscript_figures.py::fig5_sens_spec`); the external-cohort schematic
@@ -74,6 +83,21 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   AI detection AUC 0.70, sign 62/93 (HS 16/18, MRI-negative 24/42), calibrated 24/31 at 6 % FP, Ndagijimana cut-offs 32/41; adding
   perfusion (sequential / two-feature LOO logistic) gives 64/93, HS unchanged; best balanced point 0.52 → requirement still unmet.
   In-house anatomy is MNI-space, so `first_volume_ai_inhouse.sh` must not be run (volumes normalized). Outputs under `ez_analysis_mdt/audit/`. Deck slides 31–34 carry these (43 slides).
+- **Audit 2026-11-04 (registration chain, index form, plain Flow, label provenance, improvement list):** audit doc §14.
+  Labels: in-house = thesis Table 11 → `ez_ground_truth.py`; Chalfont = `build_subjects.py` priority (lateralisation column 47,
+  laterality code 13, side column 4, regex on recruitment-log text 29 of the 93; tiers 12/34/47). AI = 200 (L−R)/(L+R): the 200 is
+  cosmetic (z identical to 1e-13); six index forms give 58–61/93, none better (`scripts/audit/ai_definitions.py` →
+  `ez_analysis_mdt/audit/ai_definitions/`). Plain Flow (the protocol's eASL_Flow) ≥ TC-Flow on every statistic: regional temporal
+  65/93 (cal. 14/16) vs 61/93 (`ez_analysis_mdt/audit/flow_variant/`, features `v2_features/chalfont_flow/`); sequential FIRST
+  volume-AI call → sign of Flow regional z̄ = **68/93 (0.73)**, best always-call result (`first_chalfont/results_flow.csv`). Rules call
+  both sides (in-house L 4/8, R 3/5; Chalfont L 29/43, R 29/50): "always left" is the baseline, not the rule. Improvement list landed:
+  `make_qc.py` mirror Dice + median−3·MAD rule, `prep_subject_features.py --tissue` + `analyze_v2.py --pvc`, empirical t*/Student-t
+  null, cluster-size null, threshold families, nested LOO, global offset (results pending); `interactive_viewer.py --dataset chalfont`;
+  `docs/pipeline/08-interactive-viewer.md` lists every map/table to open. Deck 46 slides: 4 = label provenance, 8–9 = registration
+  chain + index definition, per-side bullet on the in-house slide, analysis-3 status cell corrected. **Deck conflict risk:** the
+  project deck was overwritten at 14:21 and ~14:35 from scratchpad builds; the user's open PowerPoint copy may hold unsaved edits
+  (the slide scripts anchor on titles and can be re-run on any version).
+  Improvement list implemented the same evening (`analyze_v2.py` extensions, `prep_subject_features.py --tissue`, `make_qc.py` mirror Dice; audit §14 table): mirror-Dice QC flags 6 (no accuracy change); t* 1.80–1.85; temporal cluster-null call 20/17 at 6 % FP (TC) vs 13/12 regional; offset–direction ρ −0.43 to −0.54 persists after GM normalisation; nested LOO 61/93 TC, 58/93 Flow; PVC worse (57–58/93); FDR/Bonferroni 0 % control coverage but FP 0.12–0.20 at the statistic level. Deck: 52 slides (slide 37 = #3 vs #4 tie: McNemar 18 vs 17, p = 1.00, and the scanner-offset argument; league table after the strategies slide, Done lines on the improvement slide; 2026-11-09: four registration slides around the Chalfont chain slide — template build, three-dataset chain, one subject per dataset, calibration + mirror-Dice QC; Methods `sec:symreg` paragraph expanded to both cohorts, main text ≈ 4,996 words).
 - **Manuscript state (2026-10-20):** 33 pages; Figs 1–5 + Appendix B (workflow figure, file table, Algorithms 1–5) + Appendix C
   (z-map montages S1a/S1b/S2, `case_montage` in `scripts/make_manuscript_figures.py`, 3× upsampled, PDF includes); notation
   section (`sec:notation`); multi-metric table (`tab:enhanced`), method comparison (`tab:method_comparison`), external rule
@@ -181,6 +205,7 @@ python scripts/regional_loocv.py                 # LOOCV of regional scores
 python scripts/aggregation_separability.py       # paired bootstrap ΔAUC
 python scripts/make_manuscript_figures.py        # manuscript Fig 1-3 (writes to manuscript/figures)
 python -m pytest -q tests
+python interactive_viewer.py --subject <ID> [--png --open | --print]   # all layers (CBF, #3, #4, clinical) in FSLeyes or as PNG; menu options 17-18; --dataset chalfont --all = every patient
 ```
 
 ## Enhanced estimators (v2, post hoc, 2026-10-20)

@@ -30,13 +30,23 @@ of zAI alone.
 The viewer does not read results/, results_voxel/ or other legacy result
 directories.
 
-Menu: 16 numbered options (1-16) plus S (switch patient) and 0 (exit):
+Menu: 18 numbered options (1-18) plus S (switch patient) and 0 (exit):
   1-2   raw anatomy (original space)
   3-5   voxel z-score vs controls (supplementary)
   6-12  voxel zAI views (6 continuous, 7 sign maps, 8 significant,
         9 clinical GM, 10 top-N clusters, 11 37-ROI mask, 12 combined)
   13-16 utilities (file list, quick commands, patient report,
         island-cleaned overlay)
+  17-18 all layers of one subject (CBF, #3 perfusion z, #4 zAI, clinical
+        clusters, atlas) centred on the peak cluster: 17 FSLeyes, 18 PNG
+
+The same all-layer view runs without the menu (dataset taken from the ID):
+  python interactive_viewer.py --subject D002               # FSLeyes
+  python interactive_viewer.py --subject D002 --png --open  # PNG, opened in VS Code
+  python interactive_viewer.py --subject D002 --print       # FSLeyes command only
+  python interactive_viewer.py --subject P016 --at 60 150 90
+  python interactive_viewer.py --dataset chalfont --all     # PNG for every patient
+PNGs: visual_analysis/subject_views/<dataset>/<ID>.png.
 """
 
 import argparse
@@ -49,6 +59,30 @@ try:
     from ez_ground_truth import EZ_GROUND_TRUTH
 except Exception:
     EZ_GROUND_TRUTH = {}
+
+# Dataset switch (2026-11-04): `--dataset chalfont` points every results_zscore/
+# path at external_chalfont/results_zscore/, takes the reference sides from
+# external_chalfont/metadata/subjects.csv (via dataset_config) and uses the
+# fixed template atlas as the parcellation underlay (Chalfont has no per-subject
+# aparc+aseg). The in-house layout is the default and is unchanged.
+RESULTS_ROOT = "results_zscore"
+FIXED_ATLAS = None
+DATASET = "inhouse"
+
+
+def configure_dataset(name):
+    """Point the viewer at the in-house or the external (Chalfont) outputs."""
+    global RESULTS_ROOT, FIXED_ATLAS, EZ_GROUND_TRUTH, DATASET
+    DATASET = name
+    if name == "chalfont":
+        import dataset_config
+        cfg = dataset_config.configure("chalfont")
+        RESULTS_ROOT = str(cfg.output_dir)          # external_chalfont/results_zscore
+        FIXED_ATLAS = "external_chalfont/atlas/consensus_parcellation_sym.nii.gz"
+        EZ_GROUND_TRUTH = cfg.ground_truth()
+    else:
+        RESULTS_ROOT = "results_zscore"
+        FIXED_ATLAS = None
 
 # Lazy imports for the new clinical-mask / top-N options. These are only
 # required when the user picks the new menu options (10 / 11). Pulled in
@@ -108,6 +142,223 @@ def _cluster_physical_side(row, mean_col):
     return "L" if (float(row[mean_col]) > 0) == (hemi == "L") else "R"
 
 
+# ---------------------------------------------------------------------------
+# All layers of one subject (menu options 17-18 and the --subject / --all
+# command line). Everything lives on the 0.8-mm symmetric template grid
+# (227 x 272 x 227), so FSLeyes and the PNG show the same voxel:
+#   CBF            symreg/sym_perf/<ID>_perf_sym | external_chalfont/sym_perf/<ID>_perf_sym (TC-Flow)
+#   #3 perfusion z <results>/patients/<ID>/<ID>_vs_<band>_zscore
+#   #4 zAI         <results>/asymmetry/patients/<ID>/<ID>_asymmetry_zscore
+#   clinical       <results>/clinical/<ID>/<ID>_clinical_zai_lateralized_significant
+#   atlas          band consensus parcellation (in-house) | fixed template atlas (Chalfont)
+# The dataset is taken from the ID (P0xx in-house, C/D/N Chalfont) unless given.
+# ---------------------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent
+ALL_LAYER_DATASETS = {
+    "inhouse": dict(results="results_zscore", perf="symreg/sym_perf", atlas=None),
+    "chalfont": dict(results="external_chalfont/results_zscore", perf="external_chalfont/sym_perf",
+                     atlas="external_chalfont/atlas/consensus_parcellation_sym.nii.gz"),
+}
+# key in AllLayersView.files, PNG row title, display range (|z| below the lower bound is transparent)
+ALL_LAYERS = [
+    ("cbf", "CBF (ml/100 g/min)", (0, 80)),
+    ("perfz", "#3 perfusion z vs controls", (2, 6)),
+    ("zai", "#4 asymmetry z (zAI)", (2, 8)),
+    ("clinical", "clinical clusters (zAI)", (2, 8)),
+]
+ALL_LAYER_PNG_DIR = BASE_DIR / "visual_analysis" / "subject_views"
+
+
+def dataset_of(subject_id):
+    return "inhouse" if subject_id.upper().startswith("P") else "chalfont"
+
+
+class AllLayersView:
+    """Resolve one subject's layer files and show them in FSLeyes or as a PNG."""
+
+    def __init__(self, subject_id, dataset=None, base=BASE_DIR):
+        self.id = subject_id
+        self.dataset = dataset or dataset_of(subject_id)
+        self.base = Path(base)
+        cfg = ALL_LAYER_DATASETS[self.dataset]
+        res = self.base / cfg["results"]
+        perfz = sorted((res / "patients" / subject_id).glob(f"{subject_id}_vs_*_zscore.nii.gz"))
+        self.band = perfz[0].name[len(subject_id) + 4:-len("_zscore.nii.gz")] if perfz else None
+        atlas = cfg["atlas"] or (f"{cfg['results']}/groups/{self.band}/consensus_parcellation.nii.gz"
+                                 if self.band else None)
+        files = {
+            "t1": self.base / SYM_T1,
+            "cbf": self.base / cfg["perf"] / f"{subject_id}_perf_sym.nii.gz",
+            "perfz": perfz[0] if perfz else None,
+            "zai": res / "asymmetry" / "patients" / subject_id / f"{subject_id}_asymmetry_zscore.nii.gz",
+            "clinical": res / "clinical" / subject_id / f"{subject_id}_clinical_zai_lateralized_significant.nii.gz",
+            "atlas": self.base / atlas if atlas else None,
+        }
+        self.files = {k: (v if v is not None and Path(v).exists() else None) for k, v in files.items()}
+        if self.files["t1"] is None:
+            raise FileNotFoundError(f"template missing: {self.base / SYM_T1}")
+        self.info = self._concordance_row(res / "clinical" / "cohort_concordance.csv")
+
+    def _concordance_row(self, path):
+        if not path.exists():
+            return {}
+        import csv
+        with open(path) as fh:
+            return next((r for r in csv.DictReader(fh) if r["patient_id"] == self.id), {})
+
+    def summary(self):
+        i = self.info
+        ref = i.get("mdt_ez") or "?"
+        call = f"{i.get('algo_prediction', '?')} ({i.get('algo_confidence', '?')})" if i else "no rule output"
+        return (f"{self.id} [{self.dataset}{', ' + self.band if self.band else ''}]  reference {ref}  "
+                f"rule {call}  top {i.get('top_lobe', '-')}  peak |zAI| {i.get('peak_zai', '-')}")
+
+    def missing(self):
+        return [k for k, f in self.files.items() if f is None]
+
+    def peak_voxel(self):
+        """Voxel of the largest |value| in the clinical map, else in zAI, else the template centre."""
+        for key in ("clinical", "zai"):
+            if self.files[key] is not None:
+                d = _np.abs(_np.asanyarray(_nib.load(str(self.files[key])).dataobj, dtype=_np.float32))
+                if d.max() > 0:
+                    return tuple(int(v) for v in _np.unravel_index(_np.argmax(d), d.shape))
+        return tuple(int(s) // 2 for s in _nib.load(str(self.files["t1"])).shape)
+
+    # ---- FSLeyes ---------------------------------------------------------------------------------
+    def fsleyes_command(self, voxel):
+        f = {k: str(Path(v).relative_to(self.base)) if v else None for k, v in self.files.items()}
+        signed = ["-cm", "red-yellow", "-nc", "blue-lightblue", "-un"]
+        cmd = ["fsleyes", "-vl", *map(str, voxel), f["t1"]]
+        if f["atlas"]:
+            cmd += [f["atlas"], "-ot", "label", "-o", "-d"]
+        if f["cbf"]:
+            cmd += [f["cbf"], "-cm", "hot", "-dr", "0", "80", "-a", "60", "-d"]
+        if f["perfz"]:
+            cmd += [f["perfz"], *signed, "-dr", "2", "6", "-d"]
+        if f["zai"]:
+            cmd += [f["zai"], *signed, "-dr", "2", "8", "-d"]
+        if f["clinical"]:
+            cmd += [f["clinical"], *signed, "-dr", "2", "8"]
+        return cmd
+
+    def open_fsleyes(self, voxel):
+        import shutil
+        cmd = self.fsleyes_command(voxel)
+        if shutil.which("fsleyes") is None:
+            print("fsleyes not on PATH; run this where FSL is installed:\n  " + " ".join(cmd))
+            return
+        subprocess.Popen(cmd, cwd=self.base, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print("FSLeyes started (template + clinical clusters on; tick the eye icons for CBF, #3, #4, atlas).")
+
+    # ---- PNG -------------------------------------------------------------------------------------
+    def render_png(self, voxel, out):
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LinearSegmentedColormap
+
+        np = _np
+        t1 = np.asanyarray(_nib.load(str(self.files["t1"])).dataobj, dtype=np.float32)
+        t1 /= np.percentile(t1[t1 > 0], 99)
+        blues = LinearSegmentedColormap.from_list("blue-lightblue", ["#1f4fff", "#9fd8ff"])
+        rows = [(k, title, rng) for k, title, rng in ALL_LAYERS if self.files[k] is not None]
+        fig, axs = plt.subplots(len(rows), 3, figsize=(10, 3.0 * len(rows) + 0.5), dpi=150, squeeze=False,
+                                gridspec_kw=dict(width_ratios=[272, 227, 227]))
+        fig.patch.set_facecolor("black")
+        fig.subplots_adjust(left=0.05, right=1, bottom=0, top=1 - 0.5 / (3.0 * len(rows) + 0.5),
+                            wspace=0.02, hspace=0.04)
+        for r, (key, title, (lo, hi)) in enumerate(rows):
+            vol = np.asanyarray(_nib.load(str(self.files[key])).dataobj, dtype=np.float32)
+            if key == "cbf":  # per-subject range: HCP-ASL and GE eASL CBF differ in scale
+                lo, hi = (float(x) for x in np.percentile(vol[(vol > 0) & (t1 > 0.05)], [2, 98]))
+                title = f"CBF {lo:.0f}–{hi:.0f} ml/100 g/min"
+            for c, plane in enumerate(("sag", "cor", "ax")):
+                ax = axs[r, c]
+                under = _view_slice(t1, voxel, plane)
+                ax.imshow(under, cmap="gray", vmin=0, vmax=1, interpolation="bilinear")
+                s = _view_slice(vol, voxel, plane)
+                if key == "cbf":  # restricted to the template brain
+                    ax.imshow(np.ma.masked_where((s <= 0) | (under < 0.05), s), cmap="hot", vmin=lo, vmax=hi,
+                              alpha=0.8)
+                else:  # signed z: red-yellow positive, blue-lightblue negative, |z| < lo transparent
+                    ax.imshow(np.ma.masked_where(s < lo, s), cmap="autumn", vmin=lo, vmax=hi)
+                    ax.imshow(np.ma.masked_where(s > -lo, -s), cmap=blues, vmin=lo, vmax=hi)
+                col, row = _view_marker(voxel, vol.shape, plane)
+                ax.axvline(col, color="#39ff14", lw=0.4, alpha=0.6)
+                ax.axhline(row, color="#39ff14", lw=0.4, alpha=0.6)
+                ax.axis("off")
+                if plane != "sag":
+                    ax.text(0.02, 0.03, "L", color="w", fontsize=8, weight="bold", transform=ax.transAxes)
+                    ax.text(0.94, 0.03, "R", color="w", fontsize=8, weight="bold", transform=ax.transAxes)
+            axs[r, 0].text(-0.04, 0.5, title, color="w", fontsize=9, rotation=90, va="center", ha="right",
+                           transform=axs[r, 0].transAxes)
+        fig.suptitle(self.summary() + f"\ncrosshair = voxel {voxel}  ·  red-yellow: above controls (#3) or above "
+                     "the mirror voxel (zAI); blue: below  ·  L on the left", color="w", fontsize=9)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out, facecolor="black", bbox_inches="tight")
+        plt.close(fig)
+        return out
+
+
+def _view_slice(vol, voxel, plane):
+    """2-D slice for display: index 0 of x is the right hemisphere, so x is reversed (L on the left)."""
+    i, j, k = voxel
+    if plane == "sag":
+        s = vol[i, :, :]
+    elif plane == "cor":
+        s = vol[::-1, j, :]
+    else:
+        s = vol[::-1, :, k]
+    return s.T[::-1]
+
+
+def _view_marker(voxel, shape, plane):
+    """(column, row) of the voxel in the slice returned by _view_slice."""
+    i, j, k = voxel
+    nx, ny, nz = shape
+    if plane == "sag":
+        return j, nz - 1 - k
+    if plane == "cor":
+        return nx - 1 - i, nz - 1 - k
+    return nx - 1 - i, ny - 1 - j
+
+
+def all_layer_patient_ids(dataset, base=BASE_DIR):
+    clin = Path(base) / ALL_LAYER_DATASETS[dataset]["results"] / "clinical"
+    return sorted(p.name for p in clin.iterdir() if p.is_dir())
+
+
+def open_file(path):
+    """Open a file in VS Code when `code` is on PATH, else with the desktop default."""
+    import shutil
+    for opener in ("code", "xdg-open"):
+        if shutil.which(opener):
+            subprocess.Popen([opener, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+
+
+def run_all_layers(subject_id, dataset=None, png=False, open_png=False, print_only=False, at=None,
+                   out_dir=ALL_LAYER_PNG_DIR, quiet=False):
+    """One subject: FSLeyes (default), PNG (png=True) or the FSLeyes command (print_only=True)."""
+    v = AllLayersView(subject_id, dataset)
+    voxel = tuple(at) if at else v.peak_voxel()
+    if not quiet:
+        print(v.summary())
+        print("missing layers: " + (", ".join(v.missing()) or "none"))
+    if print_only:
+        print(" ".join(v.fsleyes_command(voxel)))
+    elif png:
+        out = v.render_png(voxel, Path(out_dir) / v.dataset / f"{subject_id}.png")
+        print(out)
+        if open_png:
+            open_file(out)
+        return out
+    else:
+        v.open_fsleyes(voxel)
+    return None
+
+
 class InteractiveOverlayViewer:
     """Interactive viewer for canonical pipeline outputs."""
 
@@ -149,6 +400,8 @@ class InteractiveOverlayViewer:
         # symmetric files are missing.
         sym_t1 = SYM_T1
         sym_parc = SYM_APARC_FMT.format(pid=patient_id)
+        if not Path(sym_parc).exists() and FIXED_ATLAS:
+            sym_parc = FIXED_ATLAS        # external cohort: one template atlas for everyone
         if self.use_sym and Path(sym_t1).exists() and Path(sym_parc).exists():
             self.space = "symmetric"
             self.overlay_t1 = sym_t1
@@ -161,7 +414,7 @@ class InteractiveOverlayViewer:
         # Pipeline B — raw voxel z-score maps (results_zscore/patients/<PID>/)
         # File pattern: <PID>_vs_<group>_zscore.nii.gz, _hyper_*, _hypo_*
         self.zscore_control_files = {}
-        zscore_patient_dir = Path(f"results_zscore/patients/{patient_id}")
+        zscore_patient_dir = Path(f"{RESULTS_ROOT}/patients/{patient_id}")
         if zscore_patient_dir.exists():
             for f in sorted(zscore_patient_dir.glob(f"{patient_id}_vs_*_zscore.nii.gz")):
                 fname = f.name
@@ -174,14 +427,14 @@ class InteractiveOverlayViewer:
                     "hyper_clusters": str(zscore_patient_dir / f"{prefix}_hyper_clusters.nii.gz"),
                     "hypo_clusters": str(zscore_patient_dir / f"{prefix}_hypo_clusters.nii.gz"),
                 }
-        self.zscore_group_dir = "results_zscore/groups"
+        self.zscore_group_dir = f"{RESULTS_ROOT}/groups"
 
         # Pipeline B — zAI voxel maps (results_zscore/asymmetry/patients/<PID>/)
         # Canonical filenames: <PID>_asymmetry_zscore.nii.gz,
         #                      <PID>_asymmetry_significant.nii.gz,
         #                      <PID>_asymmetry_left_dominant.nii.gz,
         #                      <PID>_asymmetry_right_dominant.nii.gz
-        self.zai_dir = Path(f"results_zscore/asymmetry/patients/{patient_id}")
+        self.zai_dir = Path(f"{RESULTS_ROOT}/asymmetry/patients/{patient_id}")
         self.zai_files = {
             "asymmetry_zscore": self.zai_dir / f"{patient_id}_asymmetry_zscore.nii.gz",
             "significant": self.zai_dir / f"{patient_id}_asymmetry_significant.nii.gz",
@@ -190,7 +443,7 @@ class InteractiveOverlayViewer:
         }
 
         # Pipeline B — clinical (gray-matter) maps (results_zscore/clinical/<PID>/)
-        self.clinical_dir = Path(f"results_zscore/clinical/{patient_id}")
+        self.clinical_dir = Path(f"{RESULTS_ROOT}/clinical/{patient_id}")
 
     # ------------------------------------------------------------------
     # AVAILABILITY DETECTION
@@ -231,13 +484,14 @@ class InteractiveOverlayViewer:
 
     def get_available_patients(self):
         """Scan canonical zAI directory for patients with data."""
-        zai_root = Path("results_zscore/asymmetry/patients")
+        zai_root = Path(f"{RESULTS_ROOT}/asymmetry/patients")
         anat_root = Path("Dataset")
         patients = set()
 
         if zai_root.exists():
             for d in sorted(zai_root.iterdir()):
-                if d.is_dir() and d.name.startswith("P"):
+                # in-house P0NN; external D (lesional), N (MRI-negative), C (control pseudo-patients)
+                if d.is_dir() and d.name[:1] in "PDNC":
                     if (d / f"{d.name}_asymmetry_zscore.nii.gz").exists():
                         patients.add(d.name)
 
@@ -262,7 +516,7 @@ class InteractiveOverlayViewer:
         print("AVAILABLE PATIENTS")
         print("=" * 70)
 
-        zai_root = Path("results_zscore/asymmetry/patients")
+        zai_root = Path(f"{RESULTS_ROOT}/asymmetry/patients")
         for i, patient in enumerate(patients, 1):
             tags = []
             if (zai_root / patient / f"{patient}_asymmetry_zscore.nii.gz").exists():
@@ -279,11 +533,13 @@ class InteractiveOverlayViewer:
 
         while True:
             choice = input(
-                f"\nSelect patient (1-{len(patients)}) or 0 to exit: "
+                f"\nSelect patient (1-{len(patients)} or ID, e.g. {patients[0]}) or 0 to exit: "
             ).strip()
 
             if choice == "0":
                 return None
+            if choice.upper() in patients:
+                choice = str(patients.index(choice.upper()) + 1)
 
             try:
                 idx = int(choice) - 1
@@ -295,7 +551,7 @@ class InteractiveOverlayViewer:
                 else:
                     print(f"[!] Invalid choice. Please enter 1-{len(patients)} or 0")
             except ValueError:
-                print("[!] Invalid input. Please enter a number")
+                print("[!] Invalid input. Please enter a number or a patient ID")
 
     # ------------------------------------------------------------------
     # FILE-LIST UTILITIES
@@ -533,7 +789,7 @@ class InteractiveOverlayViewer:
         print(f"   Blue = lower blood flow than controls")
 
         cmd = f"fsleyes '{mean_file}' "
-        cmd += f"'{overlay_path}' -cm brain_colours_diverging_bwr -dr -6 6 -a 80 "
+        cmd += f"'{overlay_path}' -cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic -dr -6 6 -a 80 "
         cmd += f"-n '{label}' &"
 
         print(f"\n  Command:\n  {cmd}\n")
@@ -669,7 +925,7 @@ class InteractiveOverlayViewer:
         print(f"   (antisymmetric: each finding appears red on one side, blue on the other)")
 
         cmd = f"fsleyes '{mean_f}' "
-        cmd += f"'{ai_f}' -cm brain_colours_diverging_bwr -dr -3 3 -a 75 "
+        cmd += f"'{ai_f}' -cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic -dr -3 3 -a 75 "
         cmd += f"-n 'zAI (voxel vs mirror)' &"
 
         print(f"\n  Command:\n  {cmd}\n")
@@ -721,7 +977,7 @@ class InteractiveOverlayViewer:
         print(f"  QC:      {report.get('qc_png')}")
         if cleaned_nii and Path(cleaned_nii).exists():
             cmd = (f"fsleyes '{mean_f}' '{cleaned_nii}' "
-                   f"-cm brain_colours_diverging_bwr -dr -8 8 -a 75 "
+                   f"-cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic -dr -8 8 -a 75 "
                    f"-n 'zAI cleaned' &")
             print(f"\n  Command:\n  {cmd}\n")
             try:
@@ -818,7 +1074,7 @@ class InteractiveOverlayViewer:
 
         cmd = f"fsleyes '{mean_f}' "
         cmd += (
-            f"'{sig_f}' -cm brain_colours_diverging_bwr "
+            f"'{sig_f}' -cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic "
             f"-dr -{threshold:g} {threshold:g} -a 85 "
             f"-n 'zAI significant (|zAI|>={threshold:g})' &"
         )
@@ -895,7 +1151,7 @@ class InteractiveOverlayViewer:
         cmd = f"fsleyes '{mean_f}' "
         if sig_f.exists():
             cmd += (
-                f"'{sig_f}' -cm brain_colours_diverging_bwr "
+                f"'{sig_f}' -cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic "
                 f"-dr -{threshold:g} {threshold:g} -a 65 "
                 f"-n 'zAI continuous (|zAI|>={threshold:g})' "
             )
@@ -1089,7 +1345,7 @@ class InteractiveOverlayViewer:
 
         cmd = (
             f"fsleyes '{bg}' "
-            f"'{ai_f}' -cm brain_colours_diverging_bwr -dr -{threshold:g} {threshold:g} "
+            f"'{ai_f}' -cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic -dr -{threshold:g} {threshold:g} "
             f"-a 35 -n 'zAI continuous (faded)' "
             f"'{tmp_path}' -cm yellow -dr 0.5 1 -a 90 -n 'Top-{top_n} clusters' &"
         )
@@ -1263,7 +1519,7 @@ class InteractiveOverlayViewer:
 
         cmd = (
             f"fsleyes '{bg}' "
-            f"'{tmp_path}' -cm brain_colours_diverging_bwr "
+            f"'{tmp_path}' -cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic "
             f"-dr -{threshold:g} {threshold:g} -a 80 -n 'zAI (37-ROI)' &"
         )
         print(f"\n  Command:\n  {cmd}\n")
@@ -1322,7 +1578,7 @@ class InteractiveOverlayViewer:
 
         cmd = f"fsleyes '{mean_f}' "
         cmd += (
-            f"'{ai_f}' -cm brain_colours_diverging_bwr "
+            f"'{ai_f}' -cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic "
             f"-dr -{threshold:g} {threshold:g} -a 30 -n 'zAI (continuous, |zAI|>={threshold:g})' "
         )
         if left_f.exists():
@@ -1387,7 +1643,7 @@ class InteractiveOverlayViewer:
         print("# zAI overlay (canonical, primary clinical product):")
         print(f"fsleyes {t1} \\")
         print(f"        results_zscore/asymmetry/patients/{pid}/{pid}_asymmetry_zscore.nii.gz \\")
-        print("        -cm brain_colours_diverging_bwr -dr -3 3 -a 75 -n 'zAI' &")
+        print("        -cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic -dr -3 3 -a 75 -n 'zAI' &")
         print()
 
         # ---- 3. zAI lateralized dominance (raw) ----
@@ -1427,7 +1683,7 @@ class InteractiveOverlayViewer:
         print("# COMBINED presurgical (zAI continuous + clinical clusters + parcellation):")
         print(f"fsleyes {t1} \\")
         print(f"        results_zscore/asymmetry/patients/{pid}/{pid}_asymmetry_zscore.nii.gz \\")
-        print("        -cm brain_colours_diverging_bwr -dr -3 3 -a 60 -n 'zAI' \\")
+        print("        -cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic -dr -3 3 -a 60 -n 'zAI' \\")
         if self.clinical_dir.exists():
             print(f"        results_zscore/clinical/{pid}/{pid}_clinical_zai_lateralized_significant.nii.gz \\")
             print("        -cm hot -dr 0.5 1 -a 90 -n 'Significant' \\")
@@ -1441,7 +1697,7 @@ class InteractiveOverlayViewer:
                 print(f"# Patient vs {group} controls — raw z-score (supplementary):")
                 print(f"fsleyes results_zscore/groups/{group}/mean_perfusion.nii.gz \\")
                 print(f"        {files['zscore']} \\")
-                print("        -cm brain_colours_diverging_bwr -dr -6 6 -a 70 -n 'Raw z-score' &")
+                print("        -cm brain_colours_diverging_bwr -cr -0.001 0.001 -ic -dr -6 6 -a 70 -n 'Raw z-score' &")
                 print()
 
     # ------------------------------------------------------------------
@@ -1561,10 +1817,28 @@ class InteractiveOverlayViewer:
         print("  14. Show Quick FSLeyes Commands (canonical zAI paths)")
         print(f"  15. Patient Report * (|zAI|>=4, predicted side){zai_tag}")
         print(f"  16. Island-Cleaned zAI Overlay * (speckle-free NIfTI + montage){zai_tag}")
+        print()
+        print("All layers, one subject (CBF + #3 perfusion z + #4 zAI + clinical clusters, at the peak):")
+        print("  17. All layers in FSLeyes (template + clinical on; tick the others)")
+        print("  18. All layers as a PNG (for the IDE; opens in VS Code when `code` is on PATH)")
         print("   0. Exit")
         print()
 
-        return input("Enter choice (0-16, S): ").strip().lower()
+        return input("Enter choice (0-18, S): ").strip().lower()
+
+    def view_all_layers(self):
+        """Option 17: every layer of the current subject in FSLeyes, centred on the peak cluster."""
+        if not _HAVE_SCI:
+            print("[!] numpy/nibabel needed for this option (conda activate Asym).")
+            return
+        run_all_layers(self.patient_id, DATASET)
+
+    def render_all_layers_png(self):
+        """Option 18: the same layers as a PNG under visual_analysis/subject_views/<dataset>/."""
+        if not _HAVE_SCI:
+            print("[!] numpy/nibabel needed for this option (conda activate Asym).")
+            return
+        run_all_layers(self.patient_id, DATASET, png=True, open_png=True)
 
     def main_loop(self):
         """Main interactive loop."""
@@ -1597,10 +1871,12 @@ class InteractiveOverlayViewer:
             "14": self.show_quick_commands,
             "15": self.view_clinical_report,
             "16": self.view_zai_cleaned_overlay,
+            "17": self.view_all_layers,
+            "18": self.render_all_layers_png,
         }
 
         # Options that print to stdout (no FSLeyes wait needed)
-        no_pause_choices = {"0", "13", "14", "15", "s"}
+        no_pause_choices = {"0", "13", "14", "15", "18", "s"}
 
         while True:
             choice = self.show_menu()
@@ -1617,7 +1893,7 @@ class InteractiveOverlayViewer:
             elif choice in dispatch:
                 dispatch[choice]()
             else:
-                print("[!] Invalid choice. Please enter 0-16 or S.")
+                print("[!] Invalid choice. Please enter 0-18 or S.")
 
             if choice not in no_pause_choices:
                 input("\nPress Enter to return to menu...")
@@ -1626,13 +1902,43 @@ class InteractiveOverlayViewer:
 def main():
     """Main execution function."""
     parser = argparse.ArgumentParser(
-        description="Interactive FSLeyes launcher for Pipeline B zAI maps.")
+        description="Interactive FSLeyes launcher for Pipeline B zAI maps. Without --subject/--all "
+                    "it opens the menu; with them it shows all layers of one subject (or renders "
+                    "PNGs for a whole dataset) and exits.")
     parser.add_argument(
         "--orig", action="store_true",
         help="Use original-space Dataset/<PID>/ T1 + aparc+aseg as the zAI "
              "underlay instead of the symmetric template (default: symmetric "
              "when symreg files exist). Not voxel-aligned with zAI maps.")
+    parser.add_argument(
+        "--dataset", choices=["inhouse", "chalfont"], default=None,
+        help="inhouse (default): results_zscore/ and ez_ground_truth.py; "
+             "chalfont: external_chalfont/results_zscore/, reference sides from "
+             "external_chalfont/metadata/subjects.csv, fixed template atlas as "
+             "the parcellation underlay. With --subject it is taken from the ID "
+             "(P0xx in-house, C/D/N Chalfont) unless given.")
+    cli = parser.add_argument_group("all layers without the menu (options 17-18)")
+    cli.add_argument("--subject", metavar="ID", help="show all layers of this subject and exit")
+    cli.add_argument("--all", action="store_true", help="PNG for every patient of --dataset")
+    cli.add_argument("--png", action="store_true", help="write a PNG instead of opening FSLeyes")
+    cli.add_argument("--open", action="store_true", help="open the PNG (VS Code if available)")
+    cli.add_argument("--print", action="store_true", help="print the FSLeyes command and exit")
+    cli.add_argument("--at", nargs=3, type=int, metavar=("I", "J", "K"),
+                     help="centre voxel instead of the peak cluster")
+    cli.add_argument("--out", type=Path, default=ALL_LAYER_PNG_DIR, help="PNG folder (default %(default)s)")
     args = parser.parse_args()
+    if args.subject or args.all:
+        if not _HAVE_SCI:
+            parser.error("numpy/nibabel needed (conda activate Asym)")
+        if args.all:
+            ds = args.dataset or "inhouse"
+            for sid in all_layer_patient_ids(ds):
+                run_all_layers(sid, ds, png=True, at=args.at, out_dir=args.out, quiet=True)
+        else:
+            run_all_layers(args.subject, args.dataset, png=args.png, open_png=args.open,
+                           print_only=args.print, at=args.at, out_dir=args.out)
+        return
+    configure_dataset(args.dataset or "inhouse")
     try:
         viewer = InteractiveOverlayViewer(use_sym=not args.orig)
         viewer.main_loop()
