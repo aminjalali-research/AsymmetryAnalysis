@@ -604,7 +604,8 @@ class ClinicalInterpreter:
 
         # MDT ground truth
         if report["mdt_ez"]:
-            lines.append(f" MDT ground truth: {report['mdt_ez']} ({report['mdt_confidence']} confidence)")
+            conf = report.get("mdt_confidence")   # None for external cohorts (no MDT grade)
+            lines.append(f" MDT ground truth: {report['mdt_ez']}" + (f" ({conf} confidence)" if conf else ""))
             ev = report.get("mdt_evidence") or ""
             if ev:
                 lines.append(f"   {ev[:W-3]}")

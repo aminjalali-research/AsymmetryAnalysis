@@ -12,6 +12,11 @@ Covers:
   f. interactive_viewer all-layer view (options 17-18, --subject/--all):
      dataset from the ID, layer files for both layouts, peak voxel with zAI
      fallback, FSLeyes command (centred, only template + clinical on), PNG.
+  g. interactive_viewer menu launcher: commands built through _launch in
+     record mode (template underlay, stated threshold = display threshold,
+     missing layers skipped, centred on the peak) and the reference line.
+  h. interactive_viewer registration views (options 19-25): per-dataset files
+     of the chain, missing inputs reported, consensus outlines.
 """
 
 import importlib.util
@@ -20,6 +25,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import nibabel as nib
 import numpy as np
 import pytest
 
@@ -205,6 +211,14 @@ def _view_save(path, data):
     nib.save(nib.Nifti1Image(data.astype(np.float32), np.diag([-0.8, 0.8, 0.8, 1])), str(path))
 
 
+@pytest.fixture(autouse=True)
+def _private_view_cache(tmp_path, monkeypatch):
+    """Masked copies written by the viewer go to the test's own folder, never the shared cache."""
+    import interactive_viewer as iv
+    monkeypatch.setattr(iv, "VIEW_CACHE", tmp_path / "asym_view")
+    monkeypatch.setattr(iv, "_MASKS", {})
+
+
 def _view_tree(tmp, sid="D002", peak=(3, 5, 6), clinical=True):
     """Minimal Chalfont layout: template, CBF, #3, #4, clinical map, atlas, concordance row."""
     import interactive_viewer as iv
@@ -218,6 +232,8 @@ def _view_tree(tmp, sid="D002", peak=(3, 5, 6), clinical=True):
     if clinical:
         clin = np.zeros(_VIEW_SHAPE); clin[peak] = 4.3; clin[1, 1, 1] = -2.0
         _view_save(res / f"clinical/{sid}/{sid}_clinical_zai_lateralized_significant.nii.gz", clin)
+        both = clin.copy(); both[_VIEW_SHAPE[0] - 1 - peak[0], peak[1], peak[2]] = -4.3   # mirror member
+        _view_save(res / f"clinical/{sid}/{sid}_clinical_zai_significant_clusters.nii.gz", both)
     _view_save(tmp / "external_chalfont/atlas/consensus_parcellation_sym.nii.gz", np.ones(_VIEW_SHAPE))
     (res / "clinical").mkdir(parents=True, exist_ok=True)
     (res / "clinical/cohort_concordance.csv").write_text(
@@ -245,8 +261,8 @@ def test_all_layers_fsleyes_command(tmp_path):
     import interactive_viewer as iv
     cmd = iv.AllLayersView("D002", base=_view_tree(tmp_path)).fsleyes_command((3, 5, 6))
     assert cmd[:6] == ["fsleyes", "-vl", "3", "5", "6", iv.SYM_T1]
-    clin = next(i for i, c in enumerate(cmd) if c.endswith("lateralized_significant.nii.gz"))
-    assert "-d" not in cmd[clin:]          # clinical clusters visible
+    clin = next(i for i, c in enumerate(cmd) if c.endswith("significant_clusters.nii.gz"))
+    assert "-d" not in cmd[clin:]          # clinical clusters (both pair members) visible
     assert cmd.count("-d") == 4            # atlas, CBF, #3, #4 start hidden
 
 
@@ -256,3 +272,100 @@ def test_all_layers_png(tmp_path):
     out = v.render_png(v.peak_voxel(), tmp_path / "out" / "D002.png")
     assert out.exists() and out.stat().st_size > 1000
     assert v.missing() == ["clinical"]
+
+
+# ---------------------------------------------------------------------------
+# g. interactive_viewer menu launcher (options 3-16 share _launch)
+# ---------------------------------------------------------------------------
+def _menu_viewer(tmp_path, monkeypatch):
+    import interactive_viewer as iv
+    _view_tree(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(iv, "RESULTS_ROOT", "external_chalfont/results_zscore")
+    monkeypatch.setattr(iv, "FIXED_ATLAS", "external_chalfont/atlas/consensus_parcellation_sym.nii.gz")
+    monkeypatch.setattr(iv, "DATASET", "chalfont")
+    monkeypatch.setattr(iv, "rule_focus", lambda sid, ds: (None, None))   # no 06_ report in the fixture
+    v = iv.InteractiveOverlayViewer("D002")
+    v._collect = []
+    return iv, v
+
+
+def test_menu_clinical_view_command(tmp_path, monkeypatch):
+    iv, v = _menu_viewer(tmp_path, monkeypatch)
+    v.view_zai_clinical()
+    (title, argv), = v._collect
+    assert argv[:5] == ["fsleyes", "-vl", "3", "5", "6"]            # opened on the clinical peak
+    assert argv[5] == iv.SYM_T1                                     # template underlay
+    both = argv.index(next(a for a in argv if a.endswith("significant_clusters.nii.gz")))
+    assert argv[both + 1:both + 8] == ["-cm", "red-yellow", "-nc", "blue-lightblue", "-un", "-dr", "3"]
+    nxt = argv.index(next(a for a in argv if a.endswith("lateralized_significant.nii.gz")))
+    assert "-d" not in argv[both:nxt] and argv[nxt - 1] != "-d"       # both members visible ...
+    assert "-d" in argv[nxt:nxt + 13]                                # ... higher-member map hidden
+    assert not any(a.endswith("left_dominant.nii.gz") for a in argv)  # missing masks skipped, not passed
+
+
+def test_menu_opens_on_rule_focus(tmp_path, monkeypatch):
+    iv, v = _menu_viewer(tmp_path, monkeypatch)
+    monkeypatch.setattr(iv, "rule_focus", lambda sid, ds: ((7, 8, 4), "rule's top cluster"))
+    v.view_zai_clinical()
+    (_, argv), = v._collect
+    assert argv[1:5] == ["-vl", "7", "8", "4"]                      # the rule's cluster wins over the map peak
+
+
+def test_menu_perfusion_z_threshold(tmp_path, monkeypatch):
+    iv, v = _menu_viewer(tmp_path, monkeypatch)
+    v.view_zscore_control_map()
+    (_, argv), = v._collect
+    z = argv.index(next(a for a in argv if a.endswith("_vs_CH_ALL_zscore.nii.gz")))
+    assert argv[z + 6:z + 9] == ["-dr", "1.96", "6"]                # |z| < 1.96 transparent
+    assert "-vl" not in argv                                        # whole-brain map: not centred
+
+
+def test_reference_line(monkeypatch):
+    import interactive_viewer as iv
+    monkeypatch.setattr(iv, "EZ_GROUND_TRUTH", {
+        "P016": {"ez": "R", "confidence": "Moderate"},
+        "D002": {"ez": "L", "confidence": None, "group": "discrete", "ez_lobe": "frontal", "pathology": "FCD"}})
+    v = iv.InteractiveOverlayViewer.__new__(iv.InteractiveOverlayViewer)
+    v.patient_id = "P016"
+    assert v._reference_line() == "MDT EZ: R (Moderate confidence)"
+    v.patient_id = "D002"
+    assert v._reference_line() == "Reference side: L (discrete; frontal; FCD)"
+
+
+# ---------------------------------------------------------------------------
+# h. interactive_viewer registration views (options 19-25)
+# ---------------------------------------------------------------------------
+def test_registration_view_files(tmp_path):
+    import interactive_viewer as iv
+    base = _view_tree(tmp_path)
+    rv = iv.RegistrationView("D002", base=base)
+    assert rv.t1 == base / "external_chalfont/staged/D002/T1_brain.nii.gz"
+    assert rv.asl2t1 == base / "external_chalfont/sym_perf/D002_asl2t1.mat"
+    assert rv.labels_sym == base / "external_chalfont/atlas/consensus_parcellation_sym.nii.gz"
+    miss = rv.missing()                      # fixture has CBF on T_sym but no staged inputs / warp
+    assert any(m.endswith("T1_brain.nii.gz") for m in miss) and any(m.endswith("_warp.nii.gz") for m in miss)
+    assert not any(m.endswith("D002_perf_sym.nii.gz") for m in miss)
+    ih = iv.RegistrationView("P016", base=base)
+    assert ih.asl_ref is None and ih.asl2t1 is None                 # ASL -> T1 done by HCP-ASL
+    assert ih.t1 == base / "symreg/patient_brains/P016_brain.nii.gz"
+
+
+def test_menu_outlines_use_consensus(tmp_path, monkeypatch):
+    iv, v = _menu_viewer(tmp_path, monkeypatch)
+    assert v.overlay_parc.endswith("consensus_parcellation_sym.nii.gz")   # not the patient's own warped aparc
+
+
+def test_brain_masked_copies(tmp_path):
+    import interactive_viewer as iv
+    mask = np.zeros(_VIEW_SHAPE); mask[2:10, 2:12, 2:8] = 7          # labels inside the brain
+    _view_save(tmp_path / "a/atlas.nii.gz", mask)
+    z = np.full(_VIEW_SHAPE, 3.0)
+    _view_save(tmp_path / "a/D002_vs_CH_ALL_zscore.nii.gz", z)
+    _view_save(tmp_path / "b/D002_vs_CH_ALL_zscore.nii.gz", -z)      # same file name, other dataset
+    ma = iv.brain_masked(tmp_path / "a/D002_vs_CH_ALL_zscore.nii.gz", tmp_path / "a/atlas.nii.gz")
+    mb = iv.brain_masked(tmp_path / "b/D002_vs_CH_ALL_zscore.nii.gz", tmp_path / "a/atlas.nii.gz")
+    assert ma != mb                                                   # no cache collision
+    da = np.asanyarray(nib.load(str(ma)).dataobj)
+    assert da[0, 0, 0] == 0 and da[5, 5, 5] == 3.0                    # outside zeroed, inside kept
+    assert np.asanyarray(nib.load(str(mb)).dataobj)[5, 5, 5] == -3.0

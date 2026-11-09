@@ -97,6 +97,30 @@ load_clinical_roi_mask = _pubfig.load_clinical_roi_mask
 load_patient_demographics = _pubfig.load_patient_demographics
 CLINICAL_ROI_LABELS = _pubfig.CLINICAL_ROI_LABELS
 
+
+def set_dataset(results_root="results_zscore", atlas=None, sym=True):
+    """Point the module at a results tree and its parcellation (interactive_viewer.py option 16).
+
+    results_root: ``results_zscore`` (in-house) or ``external_chalfont/results_zscore``.
+    atlas: one template-space parcellation for every subject (Chalfont has no per-subject
+    aparc+aseg); None uses the per-subject parcellation, ``symreg/sym_perf/<ID>_aparc_sym``
+    when ``sym`` (the zAI maps are in symmetric space, so the 37-ROI mask must be too).
+    """
+    global RESULTS_DIR, ASYMMETRY_DIR, load_clinical_roi_mask
+    RESULTS_DIR = BASE_DIR / results_root
+    ASYMMETRY_DIR = RESULTS_DIR / "asymmetry"
+    _pubfig.RESULTS_DIR, _pubfig.ASYMMETRY_DIR = RESULTS_DIR, ASYMMETRY_DIR
+    _pubfig.SYM_MODE = sym
+    if atlas is None:
+        load_clinical_roi_mask = _pubfig.load_clinical_roi_mask
+        return
+    fixed = np.isin(nib.load(str(BASE_DIR / atlas)).get_fdata().astype(np.int32), CLINICAL_ROI_LABELS)
+
+    def _fixed_atlas_mask(patient_id, ref_shape=None):
+        return fixed if ref_shape is None or fixed.shape == tuple(ref_shape) else None
+
+    load_clinical_roi_mask = _fixed_atlas_mask
+
 # Connectivity for connected-component labeling (matches the pipeline).
 from src.thresholding import get_structure_3d
 

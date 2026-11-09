@@ -168,8 +168,14 @@ is applied in clinical outputs (`03_`, `06_`, `interactive_viewer.py::_clinical_
   2.5 mm iso (native voxel 15.6 mm³), 5 PLDs 0.2–2.2 s, label 1.5 s.
 - Consensus parcellation: majority vote across the band's 60 control aparc+aseg files.
 - SD floor 5% (percent-AI units) + mirror max-pooling in `02_` prevent clip-to-20 artefacts at the convexity.
-- `interactive_viewer.py` still overlays on original-space anatomy; use `symreg/templates/T1_sym.nii.gz`
-  as underlay for symmetric-space maps.
+- `interactive_viewer.py` (menu audited 2026-11-09, both cohorts): every symmetric-space view sits on
+  `symreg/templates/T1_sym.nii.gz`; stated thresholds are the on-screen thresholds; focal views open on the strongest
+  clinical-tier cluster (06_ report); region outlines = consensus parcellation (patients' own warped aparcs spill
+  outside the average template, up to 7.8 % of cortex labels); options 19-25 = registration chain per patient
+  (template, inputs, ASL->T1, affine, fnirt + mirror check + QC, CBF on T_sym, `--registration` PNG; affine/warped T1
+  recomputed with FSL and cached in /tmp/asym_registration/<ID>/); #3, its clusters and CBF are shown inside the
+  consensus brain only (they cover the scanner FOV; masked copies in /tmp/asym_view/); guide in
+  `docs/pipeline/08-interactive-viewer.md`. Deck: every procedure slide carries a `code:` file:line reference.
 
 ## Pipeline A details (`05_roi_discrimination.py`)
 
