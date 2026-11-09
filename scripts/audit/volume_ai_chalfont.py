@@ -13,13 +13,20 @@ temporal z-bar calibrated call second, sign of z-bar third; (ii) antisymmetric t
 
 Inputs: ez_analysis_mdt/audit/first_chalfont/<ID>_all_fast_firstseg.nii.gz, external_chalfont/metadata/subjects.csv,
         ez_analysis_mdt/v2/chalfont/{R_patients,R_loo_controls,summary}.csv
-Output: ez_analysis_mdt/audit/first_chalfont/volume_ai.csv, results.csv (+ printout)
+Output: ez_analysis_mdt/audit/first_chalfont/volume_ai.csv, results.csv (+ printout); --v2-dir/--tag for another perfusion run
 """
 from pathlib import Path
 import numpy as np, pandas as pd, nibabel as nib
 
 BASE = Path(__file__).resolve().parents[2]
 FD = BASE / "ez_analysis_mdt/audit/first_chalfont"
+# Perfusion statistic to combine with (default: the transit-corrected v2 run). `--v2-dir <dir> --tag <suffix>`
+# scores the same combinations against another v2 output, e.g. the plain-Flow run in ez_analysis_mdt/audit/flow_variant
+# (2026-11-04), and writes results<suffix>.csv instead of results.csv.
+import argparse as _ap
+_a = _ap.ArgumentParser(); _a.add_argument("--v2-dir", default=str(BASE / "ez_analysis_mdt/v2/chalfont")); _a.add_argument("--tag", default="")
+_args, _ = _a.parse_known_args()
+V2 = Path(_args.v2_dir); TAG = _args.tag
 rng = np.random.default_rng(1)
 
 
@@ -75,7 +82,7 @@ def main():
     V.to_csv(FD / "volume_ai.csv"); print(f"segmented: {len(V)} ({(V.group == 'control').sum()} controls, {(V.group != 'control').sum()} patients)")
     ctl = V[V.group == "control"]; pat = V[(V.group != "control") & V.ez.isin(["L", "R"])]
     # exclude QC-excluded subjects if the v2 tables lack them
-    R = pd.read_csv(BASE / "ez_analysis_mdt/v2/chalfont/R_patients.csv").set_index("id"); Rc = pd.read_csv(BASE / "ez_analysis_mdt/v2/chalfont/R_loo_controls.csv").set_index("id")
+    R = pd.read_csv(V2 / "R_patients.csv").set_index("id"); Rc = pd.read_csv(V2 / "R_loo_controls.csv").set_index("id")
     pat = pat[pat.index.isin(R.index)]; ctl = ctl[ctl.index.isin(Rc.index)]
     print(f"evaluated: {len(pat)} unilateral patients, {len(ctl)} controls; HS {int((pat.pathology == 'HS').sum())}")
     ez = pat.ez.values
@@ -92,7 +99,7 @@ def main():
                              float(np.mean((s_c <= -0.071) | (s_c >= 0.061))), None, None, strata))
     # combination with the regional perfusion statistic
     zt = R.reindex(pat.index)["R_temporal"].values; zc = Rc.reindex(ctl.index)["R_temporal"].values
-    summ = pd.read_csv(BASE / "ez_analysis_mdt/v2/chalfont/summary.csv").set_index("statistic"); tz = float(summ.loc["R_temporal", "threshold"])
+    summ = pd.read_csv(V2 / "summary.csv").set_index("statistic"); tz = float(summ.loc["R_temporal", "threshold"])
     th = float(np.nanpercentile(np.abs(ctl.hipp_ai.values), 95)); hp = pat.hipp_ai.values; hc = ctl.hipp_ai.values
     def seq(h, z):
         c1 = np.where(np.abs(h) >= th, np.where(h < 0, "L", "R"), "none"); c2 = np.where(np.abs(z) >= tz, np.where(z < 0, "L", "R"), "none")
@@ -117,7 +124,7 @@ def main():
     out.append(score(f"two-feature logistic, calibrated 5% FP", np.where(np.abs(s_p) < thr, "none", np.where(s_p < 0, "L", "R")), ez, float(np.mean(np.abs(s_c) >= thr)), None, None, strata))
     out.append(score("reference: regional temporal z-bar, sign", np.where(zt < 0, "L", "R"), ez, 1.0, zt, zc, strata))
     out.append(score("reference: regional temporal z-bar, calibrated", np.where(np.abs(zt) < tz, "none", np.where(zt < 0, "L", "R")), ez, float(np.mean(np.abs(zc) >= tz)), None, None, strata))
-    T = pd.DataFrame(out); T.to_csv(FD / "results.csv", index=False)
+    T = pd.DataFrame(out); T.to_csv(FD / f"results{TAG}.csv", index=False)
     with pd.option_context("display.width", 300, "display.max_colwidth", 70): print(T.to_string(index=False))
     print("control hippocampal AI: median %.3f, SD %.3f, 95th pct |AI| %.3f" % (np.nanmedian(hc), np.nanstd(hc), th))
 

@@ -97,9 +97,16 @@ def qc_subject(sid: str, group: str, tmpl2: nib.Nifti1Image, make_png: bool = Tr
     cov = pos.sum() / mask.sum()
     cov_l = (pos & left).sum() / left.sum()
     cov_r = (pos & right).sum() / right.sum()
+    # Flip-consistency (2026-11-04, improvement list): Dice of the warped T1 tissue mask, and of the
+    # perfusion coverage, with their own left-right mirror. A mis-registered or asymmetric subject
+    # scores low; the exclusion rule (median - 3 MAD over all subjects) is applied in main().
+    tis = mask & (t1w > 0.3 * p98)
+    dice_t1 = 2.0 * (tis & np.flip(tis, axis=0)).sum() / max(1, 2 * tis.sum())
+    dice_perf = 2.0 * (pos & np.flip(pos, axis=0)).sum() / max(1, 2 * pos.sum())
     row = dict(
         id=sid, group=group,
         ncc_t1_template=round(ncc, 4),
+        mirror_dice_t1=round(float(dice_t1), 4), mirror_dice_perf=round(float(dice_perf), 4),
         mean_abs_ai_t1=round(ai["mean_abs_ai"], 2), median_abs_ai_t1=round(ai["median_abs_ai"], 2),
         mean_abs_ai_t1_tissue=round(ai_t["mean_abs_ai"], 2),
         mean_tccbf_pos=round(float(perf[pos].mean()) if pos.any() else 0.0, 2),
@@ -182,7 +189,8 @@ def main() -> None:
     if out_csv.exists():
         with open(out_csv) as fh:
             rows = {r["id"]: r for r in csv.DictReader(fh)}
-    cols = ["id", "group", "ncc_t1_template", "mean_abs_ai_t1", "median_abs_ai_t1", "mean_abs_ai_t1_tissue", "mean_tccbf_pos",
+    cols = ["id", "group", "ncc_t1_template", "mirror_dice_t1", "mirror_dice_perf", "mean_abs_ai_t1", "median_abs_ai_t1",
+            "mean_abs_ai_t1_tissue", "mean_tccbf_pos",
             "mean_tccbf_mask", "coverage", "coverage_left", "coverage_right", "coverage_lr_ratio",
             "frac_negative", "flag"]
     for sid in ids:
@@ -194,6 +202,18 @@ def main() -> None:
             print(sid, {k: rows[sid][k] for k in ("ncc_t1_template", "mean_abs_ai_t1", "mean_tccbf_pos", "coverage", "coverage_lr_ratio", "flag")})
         except Exception as exc:  # noqa: BLE001
             print(f"FAILED {sid}: {type(exc).__name__}: {exc}")
+    # Pre-specified flip-consistency rule over the whole set: mirror Dice below median - 3 MAD -> low_mirror_dice
+    vals = {k: float(rows[k]["mirror_dice_t1"]) for k in rows if str(rows[k].get("mirror_dice_t1", "")) not in ("", "nan")}
+    if vals:
+        v = np.array(list(vals.values())); med = float(np.median(v)); mad = float(np.median(np.abs(v - med))) * 1.4826
+        cut = med - 3 * mad
+        for k, d in vals.items():
+            fl = [f for f in str(rows[k].get("flag", "")).split(";") if f and f != "low_mirror_dice"]
+            if d < cut:
+                fl.append("low_mirror_dice")
+            rows[k]["flag"] = ";".join(fl)
+        print(f"mirror Dice (T1 tissue vs its flip): median {med:.4f}, MAD-SD {mad:.4f}, cut {cut:.4f}, "
+              f"flagged {sum(d < cut for d in vals.values())}")
     cio.QC.mkdir(parents=True, exist_ok=True)
     with open(out_csv, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=cols)

@@ -366,3 +366,99 @@ way: every in-house anatomical file (`T1w_acpc_dc_restore`, `aparc+aseg`, includ
 the 227 × 272 × 227 MNI 0.8-mm grid, so its volumes are normalized; the MNI-space result above (hippocampal AI AUC 0.53,
 amygdalar 0.74, n = 13) is the best available in-house. Native FreeSurfer `aseg.stats` for the in-house subjects would be
 needed (`scripts/audit/first_volume_ai_inhouse.sh` exists but must not be run on these MNI-space files).
+
+## 14. Registration chain, index definition, plain Flow, label provenance and the improvement list (2026-11-04)
+
+**Label provenance.** In-house: the side is the MDT clinical diagnosis in Table 11 of the Rai 2026 thesis
+(`manuscript/Thesis.pdf`, pp. 60–65), transcribed by hand into `ez_ground_truth.py` (`EZ_GROUND_TRUTH[pid]["ez"]` ∈ {L, R, B, U}
+with the evidence string and a High/Moderate grade); imaging ID ↔ thesis # by age + sex + lesion, P014 matches no row and is
+discarded; `dataset_config.ground_truth()` keeps ez ∈ {L, R} → 13 (8 L / 5 R). Chalfont: `external_chalfont/metadata/build_subjects.py`
+derives `ez_side` from the clinical sheets in a fixed priority order, first hit wins (counts among the 93 evaluated): explicit
+*Lateralisation* column of the SEEG-agreement workbook 47; numeric laterality code of the MNI QC table (1 = R, 0 = L) 13; *Side*
+column of the recruitment database 4; regular expression over free text (recruitment log → lesion text → MRI report → diagnosis →
+EEG; `bilat|bitemporal|both` → B, left and right → B) 29. `reference_tier`: resected (surgery date or histology) 12, lesion_mdt
+(MRI-visible lesion, not operated) 34, clinical_hypothesis (MRI-negative) 47; no Engel/ILAE outcome exists in any readable file.
+Filters: imaging-complete 101 → −N023 (ASL QC) −N066 (no Flow staged) → 99 z-maps → 93 unilateral (43 L / 50 R) + 6 bilateral
+kept in the maps but outside every accuracy count; controls 70 → −C032, C047, C051 (ASL QC), −C025 retest → 66. The per-patient
+method is recorded in `ez_side_method`.
+
+**Registration chain as run** (`scripts/chalfont/reg_chalfont_subject.sh`, 170 subjects): (0) staging: T1_brain = 1-mm MPRAGE ×
+GIF brain mask (bet fallback), asl_ref = eASL/PD_N4, tcflow (primary) and flow (secondary) as float32 with negatives kept; (a)
+`bet asl_ref -f 0.3; flirt -dof 6 -cost normmi -search ±30°` → `<ID>_asl2t1.mat`; (b) `flirt -dof 6` (full search) then
+`flirt -dof 12 -init -nosearch` → affine; (c) `fnirt --aff --subsamp 8,4,2 --miter 5,5,3 --infwhm 8,4,2 --reffwhm 6,2,0
+--warpres 10,10,10 --regmod bending_energy --intmod global_non_linear_with_bias` → `<ID>_warp.nii.gz` (same parameters as
+`symreg/reg_subject.sh`); (d) `applywarp --premat asl2t1 --warp --interp spline --datatype float` in one resampling →
+`sym_perf/<ID>_perf_sym` (TC-Flow) and `<ID>_perfflow_sym` (Flow) on the 227 × 272 × 227 0.8-mm grid, nothing clamped; (e)
+`applywarp --interp nn` of the GIF parcellation (brain mask only); (f) the warped T1 on the exact flip-symmetric 2-mm grid for
+QC. Template: `symreg/templates/T1_sym.nii.gz` = mean of 30 HCP control `T1w_restore_brain` (10 per band, each scaled to its
+98th percentile) on the HCP-MNI 0.8-mm grid, then (avg + flip₀(avg))/2 (`symreg/build_sym_template.py`): flip-symmetric by
+construction, study-specific, not MNI152-sym. Atlas: `external_chalfont/atlas/consensus_parcellation_sym.nii.gz` = voxel-wise
+mode of the 180 HCP control aparc+aseg warped to T1_sym (`scripts/chalfont/build_template_atlas.py`): 112 labels, mean label
+agreement 0.77 (91 % of labelled voxels ≥ 0.5), GM 1.37 M voxels (699 cm³), 37-ROI scope 1.29 M; it supplies the GM mask, the
+scope, the ROI means and the ASL QC of every Chalfont subject. Registration QC (`external_chalfont/qc/registration_qc.csv`):
+4 flagged (C032 low NCC, excluded; D036, D040, N015 kept as a sensitivity set), residual flip |AI| of the warped T1 in tissue
+15 % (13–19 %), coverage L/R ratio 0.995 (0.81–1.00). Deviations from the protocol note: transit-corrected CBF as the primary
+map instead of eASL_Flow; a study-specific symmetric template instead of symmetrical MNI; a fixed template atlas instead of
+FreeSurfer on each T1 (GIF labels serve as a brain mask only). Enhancements worth testing (deck slide 8): a same-scanner
+Chalfont symmetric template, GIF labels for individual ROI means, fnirt at `--warpres 6` for mesial structures, and computing
+the index on a 2-mm grid matched to the 1.9 × 1.9 × 4 mm acquisition.
+
+**Index definition.** AI = 200 (L − R)/(L + R) = 100 (L − R)/((L + R)/2) is the left–right difference as a percent of the pair
+mean; LI = AI/200 ∈ [−1, 1]. The z-score (AI − μ)/σ is invariant to any constant factor: AI and LI give the identical z map,
+clusters and rules (checked on both cohorts, max |Δz| 4·10⁻¹³ voxel-wise, 4·10⁻¹⁵ regional). Six definitions × two scales ×
+two cohorts (`scripts/audit/ai_definitions.py` → `ez_analysis_mdt/audit/ai_definitions/summary.csv`), each z-scored against the
+same-dataset controls with LOO calibration:
+
+| Definition | Chalfont regional temporal (93): sign · calibrated | Chalfont voxel 8 mm, 37-ROI: sign · calibrated | In-house (13) | Detection AUC |
+|---|---|---|---|---|
+| (L − R)/(L + R) × 200 = AI (current) | 61 · 12/13 | 59 · 8/8 | 8 | 0.53 |
+| ln(L/R) | 61 · 12/13 | 59 · 8/8 | 8 | 0.53 |
+| L − R (ml/100 g/min) | 58 · 9/10 | 56 · 8/8 | 9 | 0.51 |
+| (L − R)/GM mean | 61 · 11/12 | 57 · 6/6 | 9 | 0.53 |
+| z_L − z_R (analysis 3 as an asymmetry) | 60 · 6/7 | 56 · 8/8 | 9 | 0.53 |
+| z_L − z_R on CBF/GM mean | 59 · 11/12 | 56 · 6/6 | 8 | 0.52 |
+
+Detection AUC 0.51–0.55 everywhere, in-house 7–9/13 everywhere. Verdict: keep the ratio (the manuscript already writes it as
+LI with AI = 200 LI); the form of the index is not the limiting factor, the spatial scale and the reference population are.
+
+**Plain Flow (the protocol's eASL_Flow).** Features in `v2_features/chalfont_flow/`, results in `ez_analysis_mdt/audit/flow_variant/`
+(same `analyze_v2.py` run as the TC-Flow one): regional temporal sign 65/93 (0.69) vs 61/93 for TC-Flow, calibrated 14/16 vs
+12/13 at 6 % control FP, all-37 65/93 (calibrated 9/10), smoothed voxel mass in the 37-ROI scope 62/93 (8/8); per side Flow
+L 26/43, R 39/50. TC and Flow agree in sign in 81/93 (57 correct when they agree); mean(TC, Flow) 63/93. Within the CI, but
+consistently ≥ TC on every statistic; transit correction amplifies voxels with long δ (`ACQUISITION_CHALFONT.md`), so plain
+Flow deserves to be the primary map in a future pre-registration.
+
+**Structural prior + Flow** (`scripts/audit/volume_ai_chalfont.py --v2-dir ez_analysis_mdt/audit/flow_variant --tag _flow` →
+`ez_analysis_mdt/audit/first_chalfont/results_flow.csv`): sequential rule (volume-AI calibrated call, else the sign of the Flow
+regional temporal z̄) = 68/93 (0.73, Wilson 0.63–0.81, balanced 0.727; HS 14/18, other lesion 5/9, MRI-negative 28/42), the best
+always-call result on the external cohort; the calibrated-only sequential rule calls 39 with 32 correct (control FP 0.12); the
+two-feature logistic stays at 64/93. Only the thresholds come from controls and the sign rule has no fitted parameter, so the
+number is in-sample only through the choice among candidates; it still needs a held-out confirmation.
+
+**"The model only predicts left".** It does not: in-house primary rule L 4/8, R 3/5 (predictions 6 L / 6 R / 1 B); Chalfont
+production rule, clinical tier, L 29/43, R 29/50 (48 L / 40 R / 5 B); Chalfont regional temporal sign L 24/43, R 37/50.
+"Always left" is the majority baseline the rules are compared with, not a rule. The near-chance balanced accuracy is
+under-power (detection AUC ≈ 0.5), not one-class overfitting.
+
+**Improvement list (deck slide "What could be improved, method by method"): implementation status.** Code landed today, results
+pending from the running analysis: mirror-Dice flip-consistency QC with a pre-specified median − 3·MAD exclusion rule in
+`scripts/chalfont/make_qc.py` (`mirror_dice_t1`, `mirror_dice_perf`, flag `low_mirror_dice`); GIF GM/WM probability maps warped
+onto the v2 grid by `scripts/v2/prep_subject_features.py --tissue` and partial-volume-corrected CBF via `scripts/v2/analyze_v2.py
+--pvc`; in `analyze_v2.py`: empirical t* (5 % control GM fraction) and Student-t null, cluster-level inference with extent counted
+at the threshold and a LOO-control cluster-size null (≥ 1 native voxel), threshold families ranked by control coverage, nested
+leave-one-out over patients, a global-offset column next to the direction class; `interactive_viewer.py --dataset chalfont`.
+Not done and why: age-band templates (re-registration of 197 + 170 subjects), outcome-defined reference (no data), the 13-method
+0.8-mm thresholding run on pseudo-controls (hours). **Results of the improvement list (run 2026-11-04 15:06–15:20; `ez_analysis_mdt/v2/{chalfont,inhouse}/` extended, `ez_analysis_mdt/audit/{flow_variant,pvc_variant,flow_pvc_variant}/`, `extensions.json`, `threshold_families.csv`, `C_*.csv`).**
+
+| Fix | Implemented in | Effect on Chalfont (93 / 66 LOO controls) | Kept |
+|---|---|---|---|
+| mirror-Dice flip check + median − 3·MAD exclusion | `scripts/chalfont/make_qc.py` (`mirror_dice_t1`, `mirror_dice_perf`, flag `low_mirror_dice`) | median Dice 0.943 (0.887–0.966); 6 patients flagged (D026, D036, D040, D046, D062, N023); regional z̄ 65/93 → 62/89 (Flow), 61/93 → 58/89 (TC): same rate | yes, as QC |
+| empirical / Student-t voxel null | `analyze_v2.py` (`t_star_5pct`, `t_cut_student_97.5`) | t* = 1.80–1.85 (Gaussian 1.96 flags 3–4 % of control GM at 8 mm), Student-t 2.00; ≤ 2 side calls change | yes, reported |
+| cluster extent at the threshold, ≥ 1 native voxel, LOO-control cluster-size null | `analyze_v2.py` (`C_<scope>_t<t>_sign`, `_clusternull`) | temporal cluster-null call 20 called / 17 correct at 6 % FP (TC; Flow 15/13, PVC 15/14) vs 13/12 for the regional calibrated rule; sign 61/93, same as the regional statistic; null = 440 (temporal) / 1 768 (scope) voxels at 2.4 mm | yes |
+| GM-normalised second z + offset reported with the class | `analyze_v2.py` (`global_offset_z`) | Spearman offset vs direction class −0.43 (TC), −0.54 (Flow), −0.34/−0.51 (PVC), −0.45 in-house: the artefact is reported, not removed | yes |
+| threshold families ranked by control coverage | `analyze_v2.py` → `threshold_families.csv` | fixed 1.96 ≈ Student t ≈ t*: control coverage 3–4 %, coverage AUC 0.68–0.71, sign 58–63/93; FDR q 0.05 and Bonferroni: 0 % control coverage but 41–54 calls, precision 0.62–0.76, calibrated FP 0.12–0.20; two-means split: 30 % control coverage | yes; 13-method 0.8-mm run on pseudo-controls not done |
+| nested leave-one-out over statistics | `analyze_v2.py` (`nested_LOO_best_statistic_sign`) | 61/93 TC (picks z̄_T in 93/93 folds), 58/93 Flow (z̄_T 86, z̄_37 7), 59–60/93 with PVC (picks z̄_37): selection optimism 0–7 patients | yes |
+| partial-volume correction (GIF GM/WM on the v2 grid) | `prep_subject_features.py --tissue`, `analyze_v2.py --pvc` | regional z̄ 57/93 TC, 58/93 Flow (vs 61 and 65); calibrated 9/10 and 6/7; worse on every statistic | option, not default |
+| age-band templates; outcome-defined reference | — | not done: 367 re-registrations; no outcome data | — |
+
+In-house (13): cluster-level 6/13, nested LOO 6/13, t* 1.85; nothing changes the 7–9/13 band. Reading: of the improvement list only the cluster-size null changes an operating point (more calibrated calls at the same 6 % false-positive rate); every other fix is a reporting or QC improvement, and partial-volume correction lowers accuracy on these 4-mm-slice data.
