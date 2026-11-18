@@ -384,7 +384,9 @@ method is recorded in `ez_side_method`.
 
 **Registration chain as run** (`scripts/chalfont/reg_chalfont_subject.sh`, 170 subjects): (0) staging: T1_brain = 1-mm MPRAGE ×
 GIF brain mask (bet fallback), asl_ref = eASL/PD_N4, tcflow (primary) and flow (secondary) as float32 with negatives kept; (a)
-`bet asl_ref -f 0.3; flirt -dof 6 -cost normmi -search ±30°` → `<ID>_asl2t1.mat`; (b) `flirt -dof 6` (full search) then
+`flirt -dof 6 -cost normmi -search ±30°` on the whole head → `<ID>_asl2t1_init.mat`, refined by `flirt -cost bbr` on the GIF
+white matter → `<ID>_asl2t1.mat` (2026-11-18; before that `bet asl_ref -f 0.3` preceded the normmi fit but kept the whole
+head, see docs/pipeline/08-interactive-viewer.md "Why step 1 is brain to brain"); (b) `flirt -dof 6` (full search) then
 `flirt -dof 12 -init -nosearch` → affine; (c) `fnirt --aff --subsamp 8,4,2 --miter 5,5,3 --infwhm 8,4,2 --reffwhm 6,2,0
 --warpres 10,10,10 --regmod bending_energy --intmod global_non_linear_with_bias` → `<ID>_warp.nii.gz` (same parameters as
 `symreg/reg_subject.sh`); (d) `applywarp --premat asl2t1 --warp --interp spline --datatype float` in one resampling →

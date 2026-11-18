@@ -11,6 +11,13 @@ Then run ROC analysis against MDT ground truth (Left = positive class) on the
 unilateral cohort (L vs R, n=13). (Cohort updated 2026-06: 17 analyzable patients
 per ez_ground_truth.py — P014 excluded, P028/P029/P030 added.)
 
+Rows are ranked by the lower of sensitivity (left patients called left) and
+specificity (right patients called right), ties broken by balanced accuracy and
+then AUC (2026-11-18, manuscript Table S2). A lateralization method has to work
+for both sides: the CV ratio has the highest AUC but reaches it by calling all 8
+left patients left and only 2 of 5 right patients right, the least useful
+operating point in the table.
+
 A second "dominant" configuration (n=17) was removed on 2026-07-15. It pooled the
 bilateral (B) and unclear (U) cases into Right to mirror 05_roi_discrimination.py's
 "dominant" setting — but that setting was itself a bug: "dominant" matched no branch
@@ -153,6 +160,8 @@ def evaluate_configuration(output_csv: Path) -> None:
 
         thr = youden_optimal_threshold(y_true, scores_oriented)
         sens, spec, ppv, npv, acc, correct, total = confusion(y_true, scores_oriented, thr)
+        n_left = int(y_true.sum())
+        n_right = int(len(y_true) - n_left)
 
         rows.append(
             {
@@ -161,6 +170,12 @@ def evaluate_configuration(output_csv: Path) -> None:
                 "auc": auc,
                 "sensitivity": sens,
                 "specificity": spec,
+                "min_sens_spec": min(sens, spec),          # the weaker side: the ranking criterion
+                "balanced_accuracy": (sens + spec) / 2,
+                "left_correct": int(round(sens * n_left)),
+                "n_left": n_left,
+                "right_correct": int(round(spec * n_right)),
+                "n_right": n_right,
                 "ppv": ppv,
                 "npv": npv,
                 "accuracy": acc,
@@ -171,7 +186,9 @@ def evaluate_configuration(output_csv: Path) -> None:
             }
         )
 
-    df = pd.DataFrame(rows).sort_values("auc", ascending=False)
+    df = pd.DataFrame(rows).sort_values(
+        ["min_sens_spec", "balanced_accuracy", "auc"], ascending=False, kind="stable"
+    )
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_csv, index=False)
     print(f"Wrote {output_csv}  ({len(df)} indices)")

@@ -83,6 +83,58 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   AI detection AUC 0.70, sign 62/93 (HS 16/18, MRI-negative 24/42), calibrated 24/31 at 6 % FP, Ndagijimana cut-offs 32/41; adding
   perfusion (sequential / two-feature LOO logistic) gives 64/93, HS unchanged; best balanced point 0.52 → requirement still unmet.
   In-house anatomy is MNI-space, so `first_volume_ai_inhouse.sh` must not be run (volumes normalized). Outputs under `ez_analysis_mdt/audit/`. Deck slides 31–34 carry these (43 slides).
+- **Misdetected cases (2026-11-09, `interactive_viewer.py --misses`, options 26-27):** every method's call per patient
+  against the reference, with the label file, each clinical source's side and the reasons. Tables
+  `ez_analysis_mdt/misdetected/<dataset>/`, figures + case panels + `REPORT.md` in `visual_analysis/misdetected/<dataset>/`
+  (gitignored); hand-coded in-house source sides and the thesis's own readings (thesis Tables 11-14, manuscript Table 1)
+  in private `Dataset/reference_sources.csv`. Reproduces every published count. Chalfont: wrong calls inside the
+  leave-one-out control range (|stat| < control 95th pct.) = rule 30/30, regional z 31/32, Flow 26/28, voxel mass
+  34/34, #3 34/34, hippocampal volume 25/31; calls beyond it: regional z 12/13 right, Flow 14/16, voxel mass 8/8
+  (inside: 60-66 %); rule Moderate/Strong in 56 % of LOO controls; sequential rule 12/12 resected vs 31/47
+  clinical-hypothesis labels; PET agrees with the methods against the label in N019 and N034. In-house rule misses
+  (P015, P022, P025, P027, P028, P030) are all carried by subtle-class clusters; groups: the rule's own vote while
+  others are right (P022, P025 parietal, P028 tie, P030), perfusion against the label (P027, all methods + thesis
+  reader left, unchanged without the offset), global offset (P015). Offset test as the field normalizes (Boscolo
+  Galazzo 2015 divides CBF by the GM mean; here the median GM #3 z is removed from both sides of every cluster and the
+  rule re-run): in-house 8/13 vs 7 (P015, P025 reverse to correct, P028 tie -> R, P023 breaks), Chalfont 56/93 vs 58
+  (8 misses fixed, 10 hits broken) -- explains single misses, not a fix (Borghammer 2008 normalization bias).
+  Extreme-only test (normative models count only |z| > 2 deviations, Rutherford 2022 eLife): rule with the subtle
+  class dropped = 4/13 in-house (7 as run), 48/93 Chalfont (58): hits rest on sub-threshold clusters as much as misses.
+  Reason flags are threshold-free tests (offset removed / extreme-only call changes; hyper vs hypo volume).
+  Source coding verified: 149/149 codes backed by a verbatim quote found in the patient's row of thesis Tables 11-14
+  (private `Dataset/reference_sources_quotes.csv`, `verify_inhouse_sources()`, test), 17/17 tiers match manuscript
+  Table 1; user decision 2026-11-09: tentative findings ('?') count as weak support for that side. The thesis's readings were graded beside the presumed EZ (blinding not stated): visual 9/13, ROI
+  9/13, voxel 7/13 vs blind 5-9/13; they miss P017 and P027 like our regional methods. P023's regional LI score equals
+  the fitted 05_ cut (called R only by strict inequality). Deck slides 49-56 (62 slides; 56 = bilateral / unclear patients); supplement S14
+  (`sec:misdetected`, tab:misdetected_inhouse / _external, figS_misdetected_*), 39 pages.
+  **Bilateral / unclear patients, kept apart (2026-11-18, user goal):** `MissAnalysis.bilateral_unclear()` ->
+  `bilateral_unclear.csv` / `.png`, REPORT section 9 (never scored; manuscript untouched by design). In-house P018 /
+  P019 / P020 / P021: blind methods all R in P019 (stereo-EEG 19 R vs 15 L), split in the other three; 11/12
+  statistics with controls inside the control range (unilateral 35/39), calibrated regional z calls a side only in
+  P020 -- the cancellation a bilateral EZ predicts. Chalfont `R_patients.csv` also carries B-labelled patients
+  (N028, N059, ...), reported the same way. Test `test_bilateral_unclear_kept_apart`.
+- **Chalfont step 1 (ASL -> T1) audit and fix (2026-11-18, user goal "images not aligned"):** `bet -f 0.3` on the PD
+  reference kept the whole head (bright scalp fat), so the rigid fit was head-to-brain normmi. Audit of 170 subjects
+  (header geometry vs saved matrix; CBF-cortex correlation and ventricle/cortex CBF in T1 space): saved fit better
+  than headers in 162/169, worse in none, but BBR on the GIF white matter improved every weak subject (D042 8.7 deg
+  off). `reg_chalfont_subject.sh` step a = whole-head normmi init (`_asl2t1_init.mat`) + `flirt -cost bbr` (labels
+  81-94, global_abs), accepted only within 15 deg / 8 mm of the init and with a CBF-cortex correlation not lower
+  (`chalfont_io.py step1pick`; N052's BBR slid 14 mm and halved the correlation -> rejected); `<ID> step1` mode and
+  `run_registration.sh --redo-step1` redo a) + d) only. Re-estimated 2026-11-18 for all 170: correlation median
+  0.41 -> 0.45, better (> 0.02) in 86 of 169, worse in none, median move 1.3 deg / 1.2 mm, largest C061 9.7 deg, D042 8.7 deg (`visual_analysis/registration_audit/step1_population.png`).
+  Weighted-normmi search is unstable (D042 60 deg off): do not use. `make_qc.py` adds `asl_t1_method/gm_corr/vent_ratio` (+ flag `low_asl_t1_fit` < 0.20) and shows masked CBF.
+  The dragged rim at the brain edge is trilinear resampling of 4-mm slices 15-40 deg oblique to the T1 (maps are zero
+  outside the head natively; synthetic perfect alignment gives vent/cortex ~0.2 vs 0.35 measured); step 4 composition
+  verified (rigid-then-warp r = 0.995). Viewer option 6 now shows spline CBF masked to the T1 brain + 2 mm, with native
+  voxels, PD and mask as hidden layers, cached per matrix mtime. Old matrices: `external_chalfont/qc/asl2t1_v1/`;
+  comparison `qc/asl2t1_v1_vs_v2.csv`; deck slides 11-12 (62 slides). **Downstream Chalfont outputs (results_zscore*, v2, audits, numbers in the
+  manuscript/deck) are from the old matrices until the pipeline is re-run.**
+- **Table S2 ranking (2026-11-18, user goal):** `scripts/per_index_discrimination.py` ranks the 15 indices by
+  min(sensitivity, specificity) (sens = left called left /8, spec = right called right /5), ties by balanced
+  accuracy then AUC; columns `min_sens_spec`, `balanced_accuracy`, `left_correct`, `right_correct`. Glass's delta /
+  simple difference / raw ratio lead (6/8, 3/5, 0.60); CV ratio (highest AUC 0.65) is one-sided (8/8, 2/5, 0.40).
+  Table S1 is definitions (no ranking); main-text Table 2 and S9/S10 still AUC / balanced-accuracy ordered. Test
+  `test_per_index_table_ranked_by_the_weaker_side`.
 - **Audit 2026-11-04 (registration chain, index form, plain Flow, label provenance, improvement list):** audit doc §14.
   Labels: in-house = thesis Table 11 → `ez_ground_truth.py`; Chalfont = `build_subjects.py` priority (lateralisation column 47,
   laterality code 13, side column 4, regex on recruitment-log text 29 of the 93; tiers 12/34/47). AI = 200 (L−R)/(L+R): the 200 is
@@ -148,7 +200,7 @@ side = deviating hemisphere. The legacy polarity-flip fallback in `06_` (old CSV
 | Surgical | ≥5 | ≥200 vox | 102 mm³ (6.6) |
 | Native | ≥4 | ≥610 vox | 312 mm³ (20) |
 
-**As implemented (audit 2026-10-20):** `02_` forms clusters at |zAI| ≥ 1.96 with ≥ 50 voxels; the tiers in `06_` and
+**As implemented (audit 2026-10-20):** `02_` forms 18-connected clusters (`CLUSTER_CONNECTIVITY = 2`; the manuscript said 26 until 2026-11-09) at |zAI| ≥ 1.96 with ≥ 50 voxels; the tiers in `06_` and
 `scripts/clinical_stratified_analysis.py` keep a 1.96-cluster when its *peak* |zAI| reaches the tier value and its extent
 *at 1.96* reaches the voxel count. `03_` maps use a voxel threshold of 3 / ≥ 50. See `docs/audit/METHODS_AUDIT_2026-10-20.md`.
 
@@ -171,11 +223,16 @@ is applied in clinical outputs (`03_`, `06_`, `interactive_viewer.py::_clinical_
 - `interactive_viewer.py` (menu audited 2026-11-09, both cohorts): every symmetric-space view sits on
   `symreg/templates/T1_sym.nii.gz`; stated thresholds are the on-screen thresholds; focal views open on the strongest
   clinical-tier cluster (06_ report); region outlines = consensus parcellation (patients' own warped aparcs spill
-  outside the average template, up to 7.8 % of cortex labels); options 19-25 = registration chain per patient
-  (template, inputs, ASL->T1, affine, fnirt + mirror check + QC, CBF on T_sym, `--registration` PNG; affine/warped T1
-  recomputed with FSL and cached in /tmp/asym_registration/<ID>/); #3, its clusters and CBF are shown inside the
+  outside the average template, up to 7.8 % of cortex labels); #3, its clusters and CBF are shown inside the
   consensus brain only (they cover the scanner FOV; masked copies in /tmp/asym_view/); guide in
-  `docs/pipeline/08-interactive-viewer.md`. Deck: every procedure slide carries a `code:` file:line reference.
+  `docs/pipeline/08-interactive-viewer.md`. **Menu = Methods order (2026-11-09):** 1-2 inputs, 3 #1 regional LI
+  (Pipeline A + 05_ scores), 4-10 registration chain (affine/warped T1 recomputed with FSL, cached in
+  /tmp/asym_registration/<ID>/), 11 #2 voxel AI, 12 control normative, 13 #4 zAI + calibration (11-13 open on one
+  voxel and print AI -> mean/SD -> zAI), 14 clusters at 1.96, 15 clinical maps, 16 #3 (direction input), 17 direction
+  classes, 18-21 decision (report, top-3, 37 regions, combined), 22 regional normative z_LI, 23 #3 on its own, 24-25
+  all layers, 26-27 misdetected cases (cohort / patient; also `--misses`), 28 island cleaning, 29-30 utilities. Numbers come from `MENU`/`OPTION`; never hard-code "option N"
+  (test_menu_follows_methods_order). Deck: every procedure slide carries a `code:` file:line reference and a `view:`
+  option.
 
 ## Pipeline A details (`05_roi_discrimination.py`)
 
@@ -211,7 +268,7 @@ python scripts/regional_loocv.py                 # LOOCV of regional scores
 python scripts/aggregation_separability.py       # paired bootstrap ΔAUC
 python scripts/make_manuscript_figures.py        # manuscript Fig 1-3 (writes to manuscript/figures)
 python -m pytest -q tests
-python interactive_viewer.py --subject <ID> [--png --open | --print]   # all layers (CBF, #3, #4, clinical) in FSLeyes or as PNG; menu options 17-18; --dataset chalfont --all = every patient
+python interactive_viewer.py --subject <ID> [--png --open | --print]   # all layers (CBF, #3, #4, clinical) in FSLeyes or as PNG; menu options 24-25; --dataset chalfont --all = every patient
 ```
 
 ## Enhanced estimators (v2, post hoc, 2026-10-20)

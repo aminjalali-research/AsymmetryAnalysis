@@ -99,7 +99,7 @@ CLINICAL_ROI_LABELS = _pubfig.CLINICAL_ROI_LABELS
 
 
 def set_dataset(results_root="results_zscore", atlas=None, sym=True):
-    """Point the module at a results tree and its parcellation (interactive_viewer.py option 16).
+    """Point the module at a results tree and its parcellation (interactive_viewer.py, island-cleaned option).
 
     results_root: ``results_zscore`` (in-house) or ``external_chalfont/results_zscore``.
     atlas: one template-space parcellation for every subject (Chalfont has no per-subject

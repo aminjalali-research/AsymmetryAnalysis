@@ -4,8 +4,13 @@
 Per subject: external_chalfont/qc/<ID>.png with three rows
   1. T1_sym (2 mm) with contours of the warped T1 (red) -> T1->template fit
   2. T1_sym with the warped transit-corrected CBF overlay          -> ASL->T1->template chain
-  3. native T1_brain with contours of the ASL reference resampled by asl2t1.mat -> ASL->T1 fit
+  3. native T1_brain with the TC-CBF resampled by asl2t1.mat (spline, inside the T1 brain + 2 mm) -> ASL->T1 fit
 and one row in external_chalfont/qc/registration_qc.csv:
+  asl_t1_method        bbr (normmi refined by boundary-based registration) or normmi
+  asl_t1_gm_corr       ASL->T1 fit: correlation of the CBF with the GIF cortex indicator inside the T1 brain
+                       (within the ASL slab); 0.40 median after BBR, < 0.20 flagged (low_asl_t1_fit)
+  asl_t1_vent_ratio    median CBF in the lateral ventricles (GIF 50-53) / median CBF in the cortex; ~0.2 is
+                       what a perfectly aligned map gives at 4-mm slices, 0.35 the cohort median
   ncc_t1_template      normalized cross-correlation warped T1 (2 mm) vs template, template mask
   mean_abs_ai_t1       mean |100 (x - flip0 x)/mean| of the warped T1 at 2 mm (flip-symmetry sanity)
   mean_abs_ai_t1_tissue  same, restricted to voxels whose mirror pair are both > 30 % of p98
@@ -53,18 +58,56 @@ def world_to_index(aff: np.ndarray, xyz) -> tuple:
     return tuple(int(round(c)) for c in v[:3])
 
 
-def asl_ref_in_t1(sid: str) -> np.ndarray | None:
+VENTRICLES = (50, 51, 52, 53)      # GIF v3: inferior lateral and lateral ventricles, both sides
+FLAG_ASL_T1 = 0.20                 # asl_t1_gm_corr below this: the ASL -> T1 fit is suspect
+
+
+def asl_in_t1(sid: str, what: str = "tcflow", interp: str = "spline") -> np.ndarray | None:
+    """An ASL-space image resampled into the T1 with the pipeline's asl2t1.mat (None without the matrix)."""
     st = cio.STAGED / sid
     mat = cio.SYM_PERF / f"{sid}_asl2t1.mat"
     if not mat.exists():
         return None
     with tempfile.TemporaryDirectory() as td:
-        out = os.path.join(td, "ref_in_t1.nii.gz")
-        subprocess.run(["flirt", "-in", str(st / "asl_ref.nii.gz"), "-ref", str(st / "T1_brain.nii.gz"),
-                        "-applyxfm", "-init", str(mat), "-out", out, "-interp", "trilinear"],
+        out = os.path.join(td, "in_t1.nii.gz")
+        subprocess.run(["flirt", "-in", str(st / f"{what}.nii.gz"), "-ref", str(st / "T1_brain.nii.gz"),
+                        "-applyxfm", "-init", str(mat), "-out", out, "-interp", interp],
                        check=True, env={**os.environ, "FSLOUTPUTTYPE": "NIFTI_GZ"},
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return nib.load(out).get_fdata(dtype=np.float32)
+
+
+def asl_t1_fit(sid: str) -> dict:
+    """How well the CBF sits in the T1 (the ASL -> T1 step on its own): correlation with the cortex indicator and the
+    ventricle / cortex CBF ratio, inside the T1 brain and the ASL slab. Also returns the masked CBF for the panel."""
+    from scipy import ndimage
+    st = cio.STAGED / sid
+    cbf = asl_in_t1(sid, "tcflow", "spline")
+    ref = asl_in_t1(sid, "asl_ref", "trilinear")
+    out = dict(asl_t1_method="", asl_t1_gm_corr="", asl_t1_vent_ratio="", cbf_masked=None)
+    if cbf is None:
+        return out
+    init = cio.SYM_PERF / f"{sid}_asl2t1_init.mat"
+    final = cio.SYM_PERF / f"{sid}_asl2t1.mat"
+    if init.exists():
+        out["asl_t1_method"] = "normmi" if np.allclose(np.loadtxt(init), np.loadtxt(final)) else "bbr"
+    else:
+        out["asl_t1_method"] = "normmi_wholehead"       # matrices from before 2026-11-18
+    mask = nib.load(str(st / "brain_mask.nii.gz")).get_fdata() > 0
+    out["cbf_masked"] = cbf * ndimage.binary_dilation(mask, iterations=2)
+    parc_p = st / "gif_parc.nii.gz"
+    if not parc_p.exists():
+        return out
+    parc = np.asanyarray(nib.load(str(parc_p)).dataobj)
+    fov = ndimage.binary_erosion(ref > 0, iterations=3)
+    cortex, vent = (parc >= 100) & fov, np.isin(parc, VENTRICLES) & fov
+    inb = mask & fov & (cbf != 0)
+    mc = float(np.median(cbf[cortex & (cbf > 0)])) if (cortex & (cbf > 0)).any() else 0.0
+    if inb.sum() > 100:
+        out["asl_t1_gm_corr"] = round(float(np.corrcoef(cbf[inb], (parc[inb] >= 100).astype(float))[0, 1]), 4)
+    if mc > 0 and (vent & (cbf > 0)).any():
+        out["asl_t1_vent_ratio"] = round(float(np.median(cbf[vent & (cbf > 0)]) / mc), 4)
+    return out
 
 
 def panel_slices(vol: np.ndarray, aff: np.ndarray, cuts_world) -> list:
@@ -115,7 +158,10 @@ def qc_subject(sid: str, group: str, tmpl2: nib.Nifti1Image, make_png: bool = Tr
         coverage_lr_ratio=round(float(min(cov_l, cov_r) / max(cov_l, cov_r)) if max(cov_l, cov_r) > 0 else 0.0, 4),
         frac_negative=round(float(((perf < 0) & mask).sum() / mask.sum()), 4),
     )
+    fit = asl_t1_fit(sid)
+    row.update({k: fit[k] for k in ("asl_t1_method", "asl_t1_gm_corr", "asl_t1_vent_ratio")})
     flags = []
+    if row["asl_t1_gm_corr"] != "" and row["asl_t1_gm_corr"] < FLAG_ASL_T1: flags.append("low_asl_t1_fit")
     if row["ncc_t1_template"] < FLAG_NCC: flags.append("low_ncc")
     if row["coverage"] < FLAG_COVERAGE: flags.append("low_coverage")
     if row["coverage_lr_ratio"] < FLAG_LR_RATIO: flags.append("lr_asymmetric")
@@ -129,13 +175,14 @@ def qc_subject(sid: str, group: str, tmpl2: nib.Nifti1Image, make_png: bool = Tr
     tp = panel_slices(tdat, aff, cuts)
     wp = panel_slices(t1w, aff, cuts)
     pp = panel_slices(perf, aff, cuts)
-    ref_t1 = asl_ref_in_t1(sid)
+    mp = panel_slices(mask.astype(np.float32), aff, cuts)
+    cbf_t1 = fit["cbf_masked"]
     st = cio.STAGED / sid
     t1n_img = nib.load(str(st / "T1_brain.nii.gz"))
     t1n = t1n_img.get_fdata(dtype=np.float32)
     nat_cuts = tuple(c for c in (t1n_img.affine @ np.array([*[s / 2 for s in t1n.shape], 1.0]))[:3])
     npnl = panel_slices(t1n, t1n_img.affine, nat_cuts)
-    rpnl = panel_slices(ref_t1, t1n_img.affine, nat_cuts) if ref_t1 is not None else None
+    rpnl = panel_slices(cbf_t1, t1n_img.affine, nat_cuts) if cbf_t1 is not None else None
 
     fig, axes = plt.subplots(3, 3, figsize=(10.5, 10))
     titles = ["axial z=0", "coronal y=-20", "sagittal x=-30"]
@@ -150,21 +197,21 @@ def qc_subject(sid: str, group: str, tmpl2: nib.Nifti1Image, make_png: bool = Tr
         ax.set_title(f"{sid} T1->sym: template + warped-T1 contours ({titles[c]})", fontsize=7)
         ax = axes[1, c]
         ax.imshow(tp[c], cmap="gray", vmin=0, vmax=tv, origin="lower")
-        over = np.ma.masked_where(pp[c] <= 0, pp[c])
+        over = np.ma.masked_where((pp[c] <= 0) | (mp[c] <= 0), pp[c])     # inside the template brain only
         ax.imshow(over, cmap="jet", vmin=0, vmax=pv, alpha=0.55, origin="lower")
-        ax.set_title(f"TC-CBF in sym space (0..{pv:.0f}) cov={row['coverage']:.2f}", fontsize=7)
+        ax.set_title(f"TC-CBF on T_sym inside the template brain (0..{pv:.0f}) cov={row['coverage']:.2f}", fontsize=7)
         ax = axes[2, c]
         nv = np.percentile(t1n[t1n > 0], 99)
         ax.imshow(npnl[c], cmap="gray", vmin=0, vmax=nv, origin="lower")
         if rpnl is not None and rpnl[c].max() > 0:
-            lev = 0.45 * np.percentile(ref_t1[ref_t1 > 0], 98)
-            ax.contour(rpnl[c], levels=[lev], colors="c", linewidths=0.6)
-        ax.set_title("ASL->T1: native T1_brain + asl_ref contour", fontsize=7)
+            ax.imshow(np.ma.masked_where(rpnl[c] < 10, rpnl[c]), cmap="hot", vmin=10, vmax=80, alpha=0.5, origin="lower")
+        ax.set_title(f"ASL->T1 ({row['asl_t1_method']}): native T1_brain + CBF >= 10, brain-masked", fontsize=7)
     for ax in axes.ravel():
         ax.axis("off")
     fig.suptitle(f"{sid} ({group})  NCC={row['ncc_t1_template']:.3f}  |AI|T1={row['mean_abs_ai_t1']:.1f}%  "
                  f"meanCBF={row['mean_tccbf_pos']:.1f}  cov L/R={row['coverage_left']:.2f}/{row['coverage_right']:.2f}  "
-                 f"{row['flag']}", fontsize=9)
+                 f"ASL->T1 GM corr={row['asl_t1_gm_corr']} vent/cortex={row['asl_t1_vent_ratio']}  {row['flag']}",
+                 fontsize=8.5)
     fig.tight_layout()
     cio.QC.mkdir(parents=True, exist_ok=True)
     fig.savefig(cio.QC / f"{sid}.png", dpi=110)
@@ -192,7 +239,7 @@ def main() -> None:
     cols = ["id", "group", "ncc_t1_template", "mirror_dice_t1", "mirror_dice_perf", "mean_abs_ai_t1", "median_abs_ai_t1",
             "mean_abs_ai_t1_tissue", "mean_tccbf_pos",
             "mean_tccbf_mask", "coverage", "coverage_left", "coverage_right", "coverage_lr_ratio",
-            "frac_negative", "flag"]
+            "frac_negative", "asl_t1_method", "asl_t1_gm_corr", "asl_t1_vent_ratio", "flag"]
     for sid in ids:
         if not (cio.SYM_PERF / f"{sid}_t1_sym_2mm.nii.gz").exists():
             print(f"skip {sid}: no outputs")

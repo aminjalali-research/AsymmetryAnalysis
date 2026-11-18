@@ -51,7 +51,7 @@ The cohort is 17 patients (P013–P030, P014 excluded; 13 unilateral) and 180 HC
 | 5 | `05_roi_discrimination.py` | ROI-based MDT discrimination, 15 indices × 4 strategies |
 | – | `ez_ground_truth.py` | MDT-reviewed clinical labels (imported by step 5) |
 | – | `analyze_zai_distributions.py` | Methodology validation (threshold sensitivity) |
-| – | `interactive_viewer.py` | FSLeyes-based interactive QC (options 1–20) |
+| – | `interactive_viewer.py` | FSLeyes viewer, menu in Methods order (options 1–30; [08-interactive-viewer.md](08-interactive-viewer.md)) |
 | 6 | `06_clinical_interpretation.py` | Reporting tiers, production rule, call strength, cohort concordance |
 | – | `scripts/v2/*.py` | Enhanced estimators: regional normative z, smoothed z-mass, leave-one-out calibration, multi-metric comparison |
 | – | `scripts/chalfont/*.py`, `dataset_config.py` | External cohort staging, QC, atlas, registration, pre-specified evaluation |

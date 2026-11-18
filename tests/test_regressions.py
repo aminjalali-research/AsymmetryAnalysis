@@ -9,14 +9,21 @@ Covers:
   d. 06_clinical_interpretation.ClinicalInterpreter._mdt_concordance.
   e. src/thresholding M3/M4/M7 do not collapse to an empty mask when the
      zAI map contains a large block of zero (no-data) voxels.
-  f. interactive_viewer all-layer view (options 17-18, --subject/--all):
+  f. interactive_viewer all-layer view (menu 'All layers', --subject/--all):
      dataset from the ID, layer files for both layouts, peak voxel with zAI
      fallback, FSLeyes command (centred, only template + clinical on), PNG.
   g. interactive_viewer menu launcher: commands built through _launch in
      record mode (template underlay, stated threshold = display threshold,
      missing layers skipped, centred on the peak) and the reference line.
-  h. interactive_viewer registration views (options 19-25): per-dataset files
-     of the chain, missing inputs reported, consensus outlines.
+  h. interactive_viewer registration views (menu 'registration'): per-dataset
+     files of the chain, missing inputs reported, consensus outlines.
+  i. interactive_viewer menu in the order of the Methods (option numbers from
+     MENU, none hard-coded), the analysis #2 voxel AI (= 02_'s index,
+     antisymmetric), regional painting sign, direction-class maps rebuilt from
+     the 02_ masks, and the regional normative z equal to the v2 table.
+  j. interactive_viewer misdetected cases: the side-from-text rule, the label-file
+     parser, and on the real outputs every method's count equal to the published
+     one, the control-range split and the reasons for the in-house misses.
 """
 
 import importlib.util
@@ -275,7 +282,7 @@ def test_all_layers_png(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# g. interactive_viewer menu launcher (options 3-16 share _launch)
+# g. interactive_viewer menu launcher (every FSLeyes view goes through _launch)
 # ---------------------------------------------------------------------------
 def _menu_viewer(tmp_path, monkeypatch):
     import interactive_viewer as iv
@@ -334,7 +341,7 @@ def test_reference_line(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# h. interactive_viewer registration views (options 19-25)
+# h. interactive_viewer registration views
 # ---------------------------------------------------------------------------
 def test_registration_view_files(tmp_path):
     import interactive_viewer as iv
@@ -369,3 +376,240 @@ def test_brain_masked_copies(tmp_path):
     da = np.asanyarray(nib.load(str(ma)).dataobj)
     assert da[0, 0, 0] == 0 and da[5, 5, 5] == 3.0                    # outside zeroed, inside kept
     assert np.asanyarray(nib.load(str(mb)).dataobj)[5, 5, 5] == -3.0
+
+
+# ---------------------------------------------------------------------------
+# i. interactive_viewer menu in Methods order, analysis #1-#2 and direction views
+# ---------------------------------------------------------------------------
+def test_menu_follows_methods_order():
+    import inspect
+    import re
+    import interactive_viewer as iv
+    titles = [t for t, _ in iv.MENU]
+    sections = ["Inputs", "Analysis #1", "Left-right symmetric registration", "Analyses #2 and #4", "Thresholding",
+                "Direction", "Lateralization decision", "Post hoc", "All layers", "Misdetected cases", "Display aid"]
+    assert [next(i for i, t in enumerate(titles) if t.startswith(sec)) for sec in sections] == list(range(len(sections)))
+    names = [n for _, items in iv.MENU for n, _ in items]
+    assert len(names) == len(set(names)) == len(iv.OPTION) == 30
+    assert all(callable(getattr(iv.InteractiveOverlayViewer, n)) for n in names) and iv.PRINT_ONLY <= set(names)
+    # numbers quoted by the deck and docs/pipeline/08-interactive-viewer.md
+    quoted = {"view_regional_li": "3", "view_reg_template": "4", "render_reg_png": "10", "view_voxel_ai": "11",
+              "view_control_normative": "12", "view_zai_asymmetry_map": "13", "view_zai_significant": "14",
+              "view_zai_clinical": "15", "view_direction_classes": "17", "view_clinical_report": "18",
+              "view_combined_presurgical": "21", "view_regional_normative": "22", "view_zscore_clusters": "23",
+              "view_all_layers": "24", "render_all_layers_png": "25", "view_miss_overview": "26",
+              "view_miss_case": "27", "show_quick_commands": "30"}
+    assert {n: iv.OPTION[n] for n in quoted} == quoted
+    body = inspect.getsource(iv).replace(iv.__doc__, "")
+    assert not re.search(r"[Oo]ptions? \d", body)       # every "option N" in a note comes from OPTION
+
+
+def test_voxel_ai_is_02s_index_and_antisymmetric(tmp_path):
+    import interactive_viewer as iv
+    cbf = np.random.default_rng(0).uniform(10, 80, _VIEW_SHAPE)
+    cbf[4, 6, 5] = 0                                                  # no AI where one side is not positive
+    _view_save(tmp_path / "cbf.nii.gz", cbf)
+    brain = np.zeros(_VIEW_SHAPE); brain[2:10, 2:12, 2:8] = 1; brain[2, 2, 2] = 0   # not mirror-symmetric
+    _view_save(tmp_path / "brain.nii.gz", brain)
+    ai = np.asanyarray(nib.load(str(iv.voxel_ai(tmp_path / "cbf.nii.gz", tmp_path / "brain.nii.gz", "T"))).dataobj)
+    ref, _ = iv.load_script("02_compute_zai.py").compute_asymmetry_map(
+        np.asanyarray(nib.load(str(tmp_path / "cbf.nii.gz")).dataobj))
+    assert ai.shape == _VIEW_SHAPE
+    inside = ai != 0
+    assert inside.sum() > 0 and np.allclose(ai[inside], ref[inside], atol=1e-3)
+    assert np.allclose(ai, -np.flip(ai, axis=0), atol=1e-3)           # AI(mirror v) = -AI(v) everywhere
+    assert ai[9, 2, 2] == 0 and ai[4, 6, 5] == 0 and ai[7, 6, 5] == 0
+
+
+def test_paint_regions_sign(tmp_path):
+    import interactive_viewer as iv
+    parc = np.zeros(_VIEW_SHAPE); parc[1:3] = 17; parc[9:11] = 53; parc[5, 5, 5] = 1001; parc[6, 5, 5] = 2001
+    _view_save(tmp_path / "parc.nii.gz", parc)
+    d = np.asanyarray(nib.load(str(iv.paint_regions({(17, 53): -0.2, (1001, 2001): float("nan")},
+                                                    tmp_path / "parc.nii.gz", "x.nii.gz"))).dataobj)
+    assert np.allclose(d[parc == 17], -0.2) and np.allclose(d[parc == 53], 0.2)   # left lower: left blue, right red
+    assert d[5, 5, 5] == 0 and d[0, 0, 0] == 0
+
+
+def test_direction_class_maps_match_report(tmp_path, monkeypatch):
+    iv, v = _menu_viewer(tmp_path, monkeypatch)
+    pos = np.zeros(_VIEW_SHAPE); pos[1:3, 1:3, 1:3] = 1; pos[1:3, 8:11, 5:7] = 1    # 02_ clusters 1 (8 vox), 2 (12)
+    neg = np.flip(pos, axis=0)                                                       # their mirrors, same ids
+    _view_save(tmp_path / v.zai_files["left_dominant"], pos)
+    _view_save(tmp_path / v.zai_files["right_dominant"], neg)
+    (tmp_path / v.zai_dir / "D002_asymmetry_cluster_report.csv").write_text(
+        "direction,cluster_id,size_voxels,cluster_hemi,ez_side_pred,direction_class\n"
+        "left-dominant,1,8,L,L,hypo\nleft-dominant,2,12,L,R,hyper\n"
+        "right-dominant,1,8,R,L,hypo\nright-dominant,2,12,R,R,hyper\n"
+        "left-dominant,3,99,L,R,subtle\n")                                         # no such cluster
+    masks, other, table, mismatch = v.direction_class_maps()
+    hypo = np.asanyarray(nib.load(str(masks["hypo"])).dataobj) > 0
+    hyper = np.asanyarray(nib.load(str(masks["hyper"])).dataobj) > 0
+    rest = np.asanyarray(nib.load(str(other)).dataobj) > 0
+    a = np.zeros(_VIEW_SHAPE, bool); a[1:3, 1:3, 1:3] = True
+    b = np.zeros(_VIEW_SHAPE, bool); b[1:3, 8:11, 5:7] = True
+    assert (hypo == a).all() and (hyper == np.flip(b, axis=0)).all()      # one member per pair, on the predicted side
+    assert (rest == (b | np.flip(a, axis=0))).all() and set(masks) == {"hypo", "hyper"}
+    assert table.loc["hypo", "L"] == 1 and table.loc["hyper", "R"] == 1 and mismatch == 1
+
+
+@pytest.mark.skipif(not (Path(__file__).resolve().parents[1] / "v2_features/inhouse/P016_roi.json").exists(),
+                    reason="needs the in-house v2 features")
+def test_regional_normative_equals_v2_table(monkeypatch):
+    import interactive_viewer as iv
+    import pandas as pd
+    base = Path(iv.BASE_DIR)
+    monkeypatch.chdir(base)
+    iv.configure_dataset("inhouse")
+    v = iv.InteractiveOverlayViewer("P016")
+    _, zbar, ctrl = v.regional_normative(base / "v2_features/inhouse")
+    row = pd.read_csv(base / "ez_analysis_mdt/v2/inhouse/R_patients.csv").set_index("id").loc["P016"]
+    assert len(ctrl) == 60
+    assert np.isclose(zbar["mesial"], row["R_mesial"]) and np.isclose(zbar["temporal"], row["R_temporal"])
+    assert np.isclose(zbar["all 37"], row["R_all37"])
+
+
+# ---------------------------------------------------------------------------
+# j. interactive_viewer misdetected cases
+# ---------------------------------------------------------------------------
+def test_side_from_text():
+    import interactive_viewer as iv
+    assert iv._side_from_text("Left temporal spikes") == "L"
+    assert iv._side_from_text("R TLE") == "R"
+    assert iv._side_from_text("right > left temporal slowing") == "B"       # both sides named
+    assert iv._side_from_text("bitemporal onset") == "B"
+    assert iv._side_from_text("Normal") == "neg"
+    assert iv._side_from_text("generalised discharges") == "NL"
+    assert iv._side_from_text("N/A") == "" and iv._side_from_text(None) == ""
+    assert iv._side_from_text("left a message with family") == "NL"        # "left" here is not a side
+
+
+def test_chalfont_label_files_parser(tmp_path):
+    import interactive_viewer as iv
+    script = tmp_path / "build_subjects.py"
+    script.write_text(
+        "k2 = src('seeg_sheet2', 'baris/x.ods [Sheet2] (N001-N059: Lateralisation)')\n"
+        "    put(i, 'lateralisation', r[ci['Lateralisation']].strip(), k2)\n"
+        "k = src('qc', 'gavin/qc.csv (ID, Laterality 1=right/0=left)')\n"
+        "    if r[3] in ('D', 'N'): put(i, 'lat_code', {'1': 'R', '0': 'L'}.get(r[4].strip()), k)\n"
+        "k = src('anon', 'oscar/anon.csv (MRI Report, EEG)')\n"
+        "    put(i, 'mri_report', r['MRI Report'].strip(), k); put(i, 'eeg', r['EEG Findings'].strip(), k)\n")
+    fields, files = iv.chalfont_label_files(script)
+    assert fields == {"lateralisation": ["seeg_sheet2"], "lat_code": ["qc"], "mri_report": ["anon"], "eeg": ["anon"]}
+    assert files["seeg_sheet2"] == "baris/x.ods [Sheet2]" and files["qc"] == "gavin/qc.csv"
+
+
+_HAVE_MISS_INPUTS = all((Path(__file__).resolve().parents[1] / f).exists() for f in (
+    "ez_analysis_mdt/v2/inhouse/R_patients.csv", "results_zscore/clinical/cohort_concordance.csv",
+    "ez_analysis_mdt/v2/chalfont/R_patients.csv", "external_chalfont/metadata/subjects.csv"))
+
+
+@pytest.mark.skipif(not _HAVE_MISS_INPUTS, reason="needs the pipeline outputs of both cohorts")
+def test_miss_analysis_reproduces_published_counts(monkeypatch):
+    import interactive_viewer as iv
+    monkeypatch.chdir(iv.BASE_DIR)
+    published = {"inhouse": dict(rule=7, regional_li=9, regional_z=8, voxel_mass=8, perfz=6),
+                 "chalfont": dict(rule=58, regional_z=61, regional_z_flow=65, voxel_mass=59, perfz=59, thesis=26,
+                                  hipp_volume=62, sequential=68)}
+    for ds, counts in published.items():
+        ma = iv.MissAnalysis(ds)
+        u = ma.unilateral
+        assert len(u) == (13 if ds == "inhouse" else 93)
+        for m, k in counts.items():
+            assert int((u[f"{m}_ok"] == 1).sum()) == k, (ds, m)
+    # Chalfont: every wrong-side call of the rule lies inside the leave-one-out controls' range
+    ms = ma.method_summary().set_index("method")
+    assert ms.loc["rule", "wrong"] == 30 and ms.loc["rule", "within_wrong"] == 30
+    assert ms.loc["regional_z", "beyond_right"] == 12 and ms.loc["regional_z", "beyond_wrong"] == 1
+
+
+@pytest.mark.skipif(not _HAVE_MISS_INPUTS, reason="needs the in-house pipeline outputs")
+def test_inhouse_rule_miss_reasons(monkeypatch):
+    import interactive_viewer as iv
+    monkeypatch.chdir(iv.BASE_DIR)
+    c = iv.MissAnalysis("inhouse").c
+    assert sorted(c.index[c["rule_miss"]]) == ["P015", "P022", "P025", "P027", "P028", "P030"]
+    assert c.loc["P025", "f_extratemporal"] and c.loc["P025", "f_others_right"] and c.loc["P025", "f_top_on_ref"]
+    assert c.loc["P027", "f_none_right"] and not c.loc["P027", "f_offset"]      # left-lower even without the offset
+    assert c.loc["P015", "global_offset_z"] > 1.5 and c.loc["P015", "vote_subtle"] > 0.8
+    # only clusters with an extreme deviation (|z| >= 2) voting: P030 turns to the reference side, P025 to no call
+    assert c.loc["P030", "f_subtle"] and c.loc["P030", "rule_extreme_only"] == "R"
+    assert c.loc["P025", "rule_extreme_only"] == "-" and not c.loc["P015", "f_subtle"]
+    # removing the global offset (as single-subject ASL normalizes CBF) reverses P015 and P025 to the reference side
+    assert c.loc["P015", "f_offset"] and c.loc["P015", "rule_offset_removed"] == "L"
+    assert c.loc["P025", "rule_offset_removed"] == "L" and c.loc["P023", "rule_offset_removed"] == "L"
+    assert c.loc["P028", "rule"] == "-" and c.loc["P028", "f_weak"]
+    assert c.loc["P023", "regional_li"] == "R" and c.loc["P023", "regional_li_on_cut"]   # score equals the fitted cut
+    assert not c.loc[["P013", "P016", "P017", "P023", "P024", "P026", "P029"], "rule_miss"].any()
+
+
+@pytest.mark.skipif(not _HAVE_MISS_INPUTS, reason="needs the in-house pipeline outputs")
+def test_bilateral_unclear_kept_apart(monkeypatch):
+    """The patients the MDT gave no side get their own table: never scored, every method's call, agreement, control range."""
+    import interactive_viewer as iv
+    monkeypatch.chdir(iv.BASE_DIR)
+    ma = iv.MissAnalysis("inhouse")
+    b = ma.bilateral_unclear()
+    assert sorted(b.index) == ["P018", "P019", "P020", "P021"] and b["ref"].isin(["B", "U"]).all()
+    assert set(b.index).isdisjoint(ma.unilateral.index) and set(b.index).isdisjoint(ma.method_summary()["missed"].str.split().sum())
+    assert b.loc["P019", "blind_agree"].startswith("all R")              # every blind method on the stereo-EEG majority side
+    assert b.loc["P018", "rule"] == "L" and b.loc["P018", "perfz"] == "R"  # split: rule with the MRI / HD-EEG, not the stereo-EEG
+    assert b.loc["P018", "sources_R"] == "interictal EEG ictal EEG invasive" and "MRI" in b.loc["P018", "sources_L"]
+    # the asymmetry is no larger than healthy controls produce, as a cancelling bilateral abnormality predicts
+    assert b.loc["P020", "inside_range"] == "2/3" and b.loc[["P018", "P019", "P021"], "inside_range"].eq("3/3").all()
+    assert (b["regional_z_cal"] == "-").sum() == 3 and b.loc["P020", "regional_z_cal"] == "R"
+
+
+def test_chalfont_step1_is_brain_to_brain():
+    """2026-11-18: bet on the PD reference kept the whole head, so ASL -> T1 was head-to-brain normmi (D042 8.5 deg
+    off). The script now refines the normmi initialisation with BBR on the GIF white matter and guards divergence."""
+    s = (ROOT / "scripts/chalfont/reg_chalfont_subject.sh").read_text()
+    cmds = [ln for ln in s.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any(ln.lstrip().startswith("bet ") for ln in cmds)
+    assert any("-cost bbr" in ln and "-wmseg" in ln for ln in cmds)
+    joined = " ".join(ln.strip() for ln in cmds)
+    assert 'chalfont_io.py" step1pick' in joined and '"$ST" 15 8' in joined   # guard: 15 deg / 8 mm + fit not worse
+    assert "_asl2t1_init.mat" in s and 'MODE="${2:-full}"' in s          # provenance + step1-only re-run
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("cio", ROOT / "scripts/chalfont/chalfont_io.py")
+    cio = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cio)
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        a = np.eye(4)
+        th = np.radians(10.0)
+        b = np.array([[1, 0, 0, 0], [0, np.cos(th), -np.sin(th), 0], [0, np.sin(th), np.cos(th), 0], [0, 0, 0, 1.0]])
+        np.savetxt(f"{td}/a.mat", a)
+        np.savetxt(f"{td}/b.mat", b)
+        img = nib.Nifti1Image(np.zeros((128, 128, 40), np.float32), np.diag([1.875, 1.875, 4.0, 1.0]))
+        nib.save(img, f"{td}/mov.nii.gz")
+        rot, mm = cio.rigid_gap(f"{td}/a.mat", f"{td}/b.mat", f"{td}/mov.nii.gz")
+        assert abs(rot - 10.0) < 1e-6
+        centre = np.array([120.0, 120.0, 80.0, 1.0])                      # dims x pixdims / 2
+        assert abs(mm - np.linalg.norm(((b - a) @ centre)[:3])) < 1e-6
+
+
+def test_per_index_table_ranked_by_the_weaker_side():
+    """Table S2: ranked by min(sensitivity, specificity), so an index that works for one side only cannot lead."""
+    import pandas as pd
+    df = pd.read_csv(ROOT / "ez_analysis_mdt/per_index_performance_exclude.csv")
+    assert (df["min_sens_spec"] - df[["sensitivity", "specificity"]].min(axis=1)).abs().max() < 1e-9
+    assert (df["min_sens_spec"].diff().dropna() <= 1e-9).all()
+    top = df.iloc[0]
+    assert top["index"] == "glass_delta_asymmetry" and (top["left_correct"], top["right_correct"]) == (6, 3)
+    cvr = df.set_index("index").loc["cv_ratio"]
+    assert cvr["auc"] == df["auc"].max() and cvr["min_sens_spec"] == 0.4      # highest AUC, one-sided operating point
+
+
+@pytest.mark.skipif(not all((Path(__file__).resolve().parents[1] / f).exists() for f in (
+    "Dataset/reference_sources.csv", "Dataset/reference_sources_quotes.csv", "manuscript/Thesis.pdf",
+    "manuscript/Manuscript_Complete.tex")) or __import__("shutil").which("pdftotext") is None,
+                    reason="needs the private source coding, the thesis PDF and pdftotext")
+def test_inhouse_sources_verified_against_thesis():
+    import interactive_viewer as iv
+    rows = iv.thesis_rows()
+    assert all(sorted(rows[t]) == list(range(1, 18)) for t in (11, 12, 13, 14))   # one row per thesis patient
+    v = iv.verify_inhouse_sources()
+    bad = v[~v["ok"]]
+    assert bad.empty, bad[["kind", "id", "column", "code", "quote"]].to_string()
+    assert (v["kind"] == "tier").sum() == 17 and (v["kind"] == "quote").sum() >= 140

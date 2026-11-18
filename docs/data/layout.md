@@ -348,7 +348,7 @@ Expected dimensions match the project MNI grid (227 × 272 × 227 at 0.8 mm) or 
 
 ```bash
 python voxel_roi_extraction.py
-python interactive_viewer.py     # then choose option 9 for the patient
+# results_voxel_roi/ is a legacy output: the current interactive_viewer.py does not show it
 # Outputs land in:
 #   results_voxel_roi/{PID}/{PID}_voxel_roi_statistics.csv
 #   results_voxel_roi/all_patients_voxel_roi_statistics.csv

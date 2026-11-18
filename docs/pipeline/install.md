@@ -67,7 +67,7 @@ The released codebase **consumes** FreeSurfer outputs (`aparc+aseg.nii.gz`); it 
 
 ## FSL & FSLeyes (only for `interactive_viewer.py`)
 
-The interactive viewer (`interactive_viewer.py`, options 18–20) shells out to `fsleyes`. None of the other canonical scripts depend on FSL.
+The interactive viewer (`interactive_viewer.py`, every map view) shells out to `fsleyes`; `--png` needs only matplotlib. None of the other canonical scripts depend on FSL.
 
 ```bash
 # Linux example via the official FSL installer

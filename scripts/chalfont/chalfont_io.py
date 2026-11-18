@@ -176,11 +176,65 @@ def flip_ai_stats(x: np.ndarray, mask: np.ndarray) -> dict:
                 n_vox=int(v.sum()))
 
 
+def rigid_gap(mat_a, mat_b, moving_image) -> tuple[float, float]:
+    """Rotation (deg) and displacement (mm) of the moving image's centre between two FSL matrices (flirt -omat act
+    on the scaled-voxel coordinates of the moving image, so the centre is dims x pixdims / 2)."""
+    A, B = np.loadtxt(mat_a), np.loadtxt(mat_b)
+    R = B[:3, :3] @ np.linalg.inv(A[:3, :3])
+    rot = float(np.degrees(np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1))))
+    img = nib.load(str(moving_image))
+    centre = np.array([*(np.array(img.shape[:3]) * np.array(img.header.get_zooms()[:3]) / 2), 1.0])
+    return rot, float(np.linalg.norm(((B - A) @ centre)[:3]))
+
+
+def asl_t1_gm_corr(mat, staged_dir) -> float:
+    """Step-1 fit score for one ASL -> T1 matrix: correlation of the TC-Flow CBF (spline-resampled into the T1) with the
+    GIF cortex indicator, inside the T1 brain and the ASL slab. NaN without a GIF parcellation."""
+    import os
+    import subprocess
+    import tempfile
+    from scipy import ndimage
+    st = Path(staged_dir)
+    if not (st / "gif_parc.nii.gz").exists():
+        return float("nan")
+    env = {**os.environ, "FSLOUTPUTTYPE": "NIFTI_GZ"}
+    with tempfile.TemporaryDirectory() as td:
+        outs = {}
+        for name, interp in (("tcflow", "spline"), ("asl_ref", "trilinear")):
+            subprocess.run(["flirt", "-in", str(st / f"{name}.nii.gz"), "-ref", str(st / "T1_brain.nii.gz"), "-applyxfm",
+                            "-init", str(mat), "-interp", interp, "-out", f"{td}/{name}.nii.gz"], check=True, env=env,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            outs[name] = nib.load(f"{td}/{name}.nii.gz").get_fdata(dtype=np.float32)
+    parc = np.asanyarray(nib.load(str(st / "gif_parc.nii.gz")).dataobj)
+    mask = nib.load(str(st / "brain_mask.nii.gz")).get_fdata() > 0
+    fov = ndimage.binary_erosion(outs["asl_ref"] > 0, iterations=3)
+    inb = mask & fov & (outs["tcflow"] != 0)
+    if inb.sum() < 100:
+        return float("nan")
+    return float(np.corrcoef(outs["tcflow"][inb], (parc[inb] >= 100).astype(float))[0, 1])
+
+
 if __name__ == "__main__":
     # CLI: chalfont_io.py resample2mm <in.nii.gz> <out.nii.gz> [order]
+    #      chalfont_io.py rigidgap <a.mat> <b.mat> <moving.nii.gz> <max_deg> <max_mm>  (exit 1 when exceeded)
+    #      chalfont_io.py step1pick <init.mat> <bbr.mat> <staged dir> <max_deg> <max_mm>
+    #          exit 0 = accept the BBR refinement: within the limits AND its CBF-cortex correlation is not lower than
+    #          the initialisation's (minus 0.01); exit 1 = keep the initialisation. Prints both scores and the gap.
+    if len(sys.argv) == 7 and sys.argv[1] == "step1pick":
+        init, bbr, st, max_deg, max_mm = sys.argv[2], sys.argv[3], sys.argv[4], float(sys.argv[5]), float(sys.argv[6])
+        rot, mm = rigid_gap(init, bbr, Path(st) / "asl_ref.nii.gz")
+        c0, c1 = asl_t1_gm_corr(init, st), asl_t1_gm_corr(bbr, st)
+        ok = rot <= max_deg and mm <= max_mm and (np.isnan(c0) or np.isnan(c1) or c1 >= c0 - 0.01)
+        print(f"step1pick: BBR moved {rot:.2f} deg, {mm:.2f} mm; CBF-cortex correlation init {c0:.3f} -> bbr {c1:.3f}; "
+              f"{'accepted' if ok else 'rejected'}")
+        sys.exit(0 if ok else 1)
     if len(sys.argv) >= 4 and sys.argv[1] == "resample2mm":
         order = int(sys.argv[4]) if len(sys.argv) > 4 else 1
         nib.save(resample_to_sym_2mm(nib.load(sys.argv[2]), order=order), sys.argv[3])
+    elif len(sys.argv) == 7 and sys.argv[1] == "rigidgap":
+        rot, mm = rigid_gap(sys.argv[2], sys.argv[3], sys.argv[4])
+        print(f"rigid gap: {rot:.2f} deg, {mm:.2f} mm at the moving image's centre")
+        sys.exit(0 if rot <= float(sys.argv[5]) and mm <= float(sys.argv[6]) else 1)
     elif len(sys.argv) >= 2 and sys.argv[1] == "complete_ids":
         print("\n".join(complete_ids()))
     else:

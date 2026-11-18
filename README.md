@@ -308,7 +308,7 @@ The clinical tier matches the z > 4 operating point reported for symmetrized FDG
 
 ## Interactive viewer
 
-`python interactive_viewer.py` opens a menu-driven FSLeyes interface (options 0–16) with the symmetric template as the underlay for the symmetric-space zAI maps; `--dataset chalfont` shows the external cohort (`external_chalfont/results_zscore/`, fixed template atlas). `docs/pipeline/08-interactive-viewer.md` lists, per question, the map or table to open without the viewer (per-patient montages, lateralization and localization CSVs, audit outputs).
+`python interactive_viewer.py` opens a menu-driven FSLeyes interface (options 1–30, in the order of the Methods: inputs, regional LI, registration, AI and zAI, thresholding, direction, decision, post hoc, then the misdetected cases) with the symmetric template as the underlay for the symmetric-space maps; `--dataset chalfont` shows the external cohort (`external_chalfont/results_zscore/`, fixed template atlas). `docs/pipeline/08-interactive-viewer.md` lists, per question, the map or table to open without the viewer (per-patient montages, lateralization and localization CSVs, audit outputs).
 
 ## Limitations
 

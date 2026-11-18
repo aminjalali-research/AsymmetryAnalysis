@@ -1,11 +1,15 @@
 # Interactive viewer (`interactive_viewer.py`)
 
-> One entry point for looking at every Pipeline-B map of any patient, in-house or Chalfont: a menu that opens
-> FSLeyes with the right files, colours and thresholds, plus a command-line mode that opens one patient directly
-> or writes PNGs for the IDE. It reads pipeline outputs and does not change them, with three exceptions:
-> - option 15 rewrites the patient's `06_` report files (`<ID>_surgeon_report.txt/.json`), as `06_` itself does;
-> - option 16 writes a cleaned map and montage;
-> - options 10–11 write temporary masks to `/tmp`.
+> One entry point for looking at every map of any patient, in-house or Chalfont: a menu that opens FSLeyes with
+> the right files, colours and thresholds, in the order of the manuscript Methods, plus a command-line mode that
+> opens one patient directly or writes PNGs for the IDE. It reads pipeline outputs and does not change them, with
+> three exceptions:
+> - option 18 rewrites the patient's `06_` report files (`<ID>_surgeon_report.txt/.json`), as `06_` itself does;
+> - option 28 writes a cleaned map and montage;
+> - options 26-27 (and `--misses`) write the misdetection tables to `ez_analysis_mdt/misdetected/` and figures, case
+>   panels and a report to `visual_analysis/misdetected/` (both gitignored);
+> - options 3, 11, 17, 19, 20 and 22 write display maps (regional values painted on the parcellation, the voxel AI,
+>   direction-class masks, temporary cluster masks) to `/tmp/asym_view/` or `/tmp`.
 
 All commands below were run on 2026-11-09 and work as written. Use the `Asym` environment. The script changes to the
 project root itself, so it can be started from any directory. Printed FSLeyes commands use paths relative to the
@@ -28,6 +32,42 @@ python interactive_viewer.py --subject D002 --registration --open   # the regist
 At the patient prompt, type the list number or the ID itself (`p016`, `D002`; case does not matter). Then pick an
 option. `S` switches patient and `0` exits.
 
+## Menu order = Methods order
+
+The menu lists the views in the order of the manuscript Methods (Section 2), so walking it from 1 to 23 presents
+the methods in the order the paper and the deck describe them. Each menu heading names its Methods subsection.
+The numbers are positions in `MENU` (`interactive_viewer.py`); every "option N" the viewer prints is taken from
+there, so a reorder renumbers everything at once (test `test_menu_follows_methods_order`).
+
+| Options | Menu section | Manuscript (Methods) | Deck slides |
+|---|---|---|---|
+| 1–2 | Inputs (original space, in-house) | MRI acquisition and processing | 3 Two cohorts · 5 Framework |
+| 3 | Analysis #1, regional LI (Pipeline A) | Regional asymmetry analysis | 27 Pipeline A, visually |
+| 4–10 | Left-right symmetric registration | Left–right symmetric registration | 8 template · 9 three datasets · 10 Chalfont chain · 11 one subject per dataset · 12 calibration and QC |
+| 11–13 | Analyses #2 and #4: voxel AI, control normative, zAI | Asymmetry index and normative z-score | 13 index form · 15 one voxel, its mirror · 16 control normative · 18–19 calibration · 20/22 noise budget |
+| 14–15 | Thresholding: clusters at 1.96 (`02_`), clinical maps (`03_`) | Thresholding | 23 z map → clusters → tiers · 24–26 thresholding methods |
+| 16–17 | Direction: #3 as the rule's input, direction classes | Direction-of-abnormality inference | 29 class tracks the offset · 30 direction rule step by step |
+| 18–21 | Lateralization decision: report, top-3, 37 regions, combined | Lateralization decision and clinical scope | 31 representative cases · 46 what the clinician should read |
+| 22–23 | Post hoc: regional normative z_LI, #3 on its own | Enhanced estimators; Direct perfusion z-score | 34–35 regional normative estimator · 36–37 method #3 |
+| 24–25 | All layers of one subject | (summary view) | 14 #3 next to #4, same slice |
+| 26–27 | Misdetected cases: every method against the reference, and why | Supplementary S14 (Results) | 49–56 misdetected cases |
+| 28–30 | Display aid and utilities | — | — |
+
+Where the deck differs: it shows Pipeline A (slide 27) after thresholding and the #3/#4 side-by-side (slide 14)
+before the index; the viewer keeps the manuscript order, in which the regional analysis needs only the inputs
+(in-house it runs on the patient's own FreeSurfer parcellation in MNI space, before any symmetric registration).
+
+Options 11, 12 and 13 open on the same voxel (the strongest clinical-tier cluster) and print its arithmetic, so one
+voxel can be followed from AI to zAI:
+
+```
+11  At the opened voxel: AI -140.2 %.
+12  At the opened voxel: control mean -12.1 %, SD 61.5 % AI.
+13  At the opened voxel: zAI = (AI -140.2 - mean -12.1) / SD 61.5 = -2.08 (map value -2.08; clipped at +-20).
+```
+
+(P016; the AI of option 11 reproduces `02_`'s zAI to 5 × 10⁻⁷ over every brain voxel.)
+
 ## Guided examples
 
 ### Example 1 · In-house P016 (MRI-negative right TLE, stereo-EEG confirmed)
@@ -47,17 +87,20 @@ Available data: [+] orig anatomy  [+] sym-space underlay  [+] raw z-score  [+] z
 Underlay: symmetric space (symreg/templates/T1_sym.nii.gz)
 ```
 
-A good order for one patient:
+To present the methods, walk the menu in order: 1–2 (inputs), 3 (regional LI and the nine aggregation scores),
+4–9 (registration, or 10 as one PNG), 11 → 12 → 13 (one voxel from AI to zAI, with the calibration), 14 → 15 (clusters,
+clinical maps), 16 → 17 (the rule's input and the class of each pair), 18 (the call), 21, then 22–23 (post hoc).
 
-1. **15 · Patient report.** This is the rule's answer in text: clinical-tier clusters (|zAI| ≥ 4, ≥ 100 voxels, 37
+For a quick clinical read of one patient:
+
+1. **18 · Patient report.** This is the rule's answer in text: clinical-tier clusters (|zAI| ≥ 4, ≥ 100 voxels, 37
    region pairs), predicted side per cluster, lobe totals. Answer `y` at the end to jump to the top-3 cluster view.
-2. **12 · Combined presurgical view.** It opens on the strongest clinical cluster. The zAI map (faded) and the
+2. **21 · Combined presurgical view.** It opens on the strongest clinical cluster. The zAI map (faded) and the
    clinical clusters are visible, with region outlines; #3, the control mean CBF and the side masks are hidden layers.
-3. **3 · #3 perfusion z.** This shows the same patient against the controls, one-sided. For in-house patients the
-   controls are HCP subjects from other sites, so a global CBF offset colours the whole brain one way. The deck slide
-   "#3 vs #4" explains why this is not a better lateralizer.
-4. **17 · All layers.** CBF, #3, #4 and the clinical clusters in one window, opened on the strongest clinical cluster.
-   Use **18** for the same view as a PNG.
+3. **17 · Direction classes.** Which pairs the rule calls hypo- or hyperperfused, and on which side, with the global
+   #3 offset printed: for P016, 22 L / 25 R hypo pairs, 11 L / 8 R hyper, 244 subtle.
+4. **24 · All layers.** CBF, #3, #4 and the clinical clusters in one window, opened on the strongest clinical cluster.
+   Use **25** for the same view as a PNG.
 
 ### Example 2 · Chalfont D002 (left frontal FCD, histology)
 
@@ -72,10 +115,12 @@ Reference side: L (discrete; frontal; FCD [histology])
 Available data: [-] orig anatomy  [+] sym-space underlay  [+] raw z-score  [+] zAI  [+] clinical
 ```
 
-Options 3–18 work exactly as for in-house patients. Options 1–2 are marked `(in-house only: no native anatomy)`,
-because Chalfont subjects have no `Dataset/<ID>/`. Option 15 prints the rule's report for this patient, which calls
-**bilateral**: 5 clinical-tier clusters, the strongest a left precentral hypoperfusion cluster at zAI −4.33. Options
-9, 12 and 17 open on that cluster and say so:
+Options 3–28 work as for in-house patients; option 3 has no FreeSurfer parcellation here and paints the regional
+means of the fixed template atlas (`v2_features/chalfont/<ID>_roi.json`) in symmetric space, as the Methods state.
+Options 1–2 are marked `(in-house only: no native anatomy)`, because Chalfont subjects have no `Dataset/<ID>/`.
+Option 18 prints the rule's report for this patient, which calls **bilateral**: 5 clinical-tier clusters, the
+strongest a left precentral hypoperfusion cluster at zAI −4.33. Options 11–13, 15, 17, 21 and 24 open on that cluster
+and say so:
 
 ```
 Opened at voxel (176, 159, 149): strongest clinical-tier cluster 119: L-precentral, hypo, peak zAI -4.33, this cluster's side L (centroid)
@@ -112,35 +157,64 @@ machine. Each PNG has one row per layer (CBF, #3, #4, clinical clusters) and thr
 through the strongest clinical cluster, marked by a green crosshair; the title says which voxel and why. In VS Code, click a PNG in the Explorer, then use the arrow
 keys to step through the patients.
 
-### Example 5 · Copy-paste commands for a patient (option 14)
+### Example 5 · Copy-paste commands for a patient (option 30)
 
-Option 14 prints the FSLeyes commands that options 3, 6, 8, 9, 12 and 17 would run for the current patient, plus the
-PNG command. Paste them on any machine that has FSLeyes and the project files.
+Option 30 prints the FSLeyes commands that options 13, 14, 15, 16, 21 and 24 would run for the current patient, each
+labelled with its option, plus the PNG command. Paste them on any machine that has FSLeyes and the project files.
 
-### Example 6 · The registration chain of one patient (options 19–25)
+### Example 6 · The registration chain of one patient (options 4–10)
 
-Options 19–25 show how a patient got from the scanner to the symmetric template. They follow the same steps as the
+Options 4–10 show how a patient got from the scanner to the symmetric template. They follow the same steps as the
 deck slide "Three datasets, one registration target".
 
 ```bash
-python interactive_viewer.py --dataset chalfont   # patient D002, then 19 ... 25
-python interactive_viewer.py --subject D002 --registration --open   # options 20-24 in one PNG, no menu
+python interactive_viewer.py --dataset chalfont   # patient D002, then 4 ... 10
+python interactive_viewer.py --subject D002 --registration --open   # options 5-9 in one PNG, no menu
 ```
 
 | # | Step | What you see | What to check |
 |---|---|---|---|
-| 19 | template | `T_sym` with the voxels where the plain mean of 30 HCP T1s differed from its mirror by ≥ 10 % (hidden layer: the plain mean) | `T_sym` is identical to its mirror; the hot voxels are what averaging removed |
-| 20 | 0 · inputs | the input T1 on its own grid, with the CBF where the scanner coordinates put it; hidden: the ASL reference and native labels | Chalfont: CBF and T1 are visibly offset before registration |
-| 21 | 1 · ASL → T1 | CBF and the PD reference resampled into the T1 with the saved rigid matrix (`<ID>_asl2t1.mat`) | perfusion fills the cortex and spares the ventricles. In-house: a note only, because HCP-ASL did this step |
-| 22 | 2 · T1 → T_sym, affine | the T1 after the affine on `T_sym`, with the template's brain and white-matter outlines | brain edge and ventricles near the outlines; folds still individual |
-| 23 | 3 · T1 → T_sym, non-linear | the T1 after fnirt with the same outlines; hidden: the T1 mirrored left-right (mirror check); QC numbers in the terminal | cortex and ventricles on the outlines; the mirrored copy should overlap |
-| 24 | 4 · CBF and labels on T_sym | the CBF after one resampling, with the consensus region outlines | the input of `01_`, `02_` and `03_` |
-| 25 | the chain as a PNG | columns: input T1, step 1, step 2, step 3, step 4; QC in the title; `visual_analysis/subject_views/<dataset>/<ID>_registration.png` | everything above at a glance |
+| 4 | template | `T_sym` with the voxels where the plain mean of 30 HCP T1s differed from its mirror by ≥ 10 % (hidden layer: the plain mean) | `T_sym` is identical to its mirror; the hot voxels are what averaging removed |
+| 5 | 0 · inputs | the input T1 on its own grid, with the CBF where the scanner coordinates put it; hidden: the ASL reference and native labels | Chalfont: CBF and T1 are visibly offset before registration |
+| 6 | 1 · ASL → T1 | the CBF resampled into the T1 with the saved rigid matrix (`<ID>_asl2t1.mat`) as the pipeline does it (spline), inside the T1 brain + 2 mm; hidden: the same CBF at its native voxels (nearest neighbour, unmasked), the PD reference, the T1 brain mask; the method and the ASL → T1 QC numbers in the terminal | perfusion fills the cortex and spares the ventricles; the smear along the oblique slice direction in the smooth layer is interpolation of 4-mm slices (compare the native layer). In-house: a note only, because HCP-ASL did this step |
+| 7 | 2 · T1 → T_sym, affine | the T1 after the affine on `T_sym`, with the template's brain and white-matter outlines | brain edge and ventricles near the outlines; folds still individual |
+| 8 | 3 · T1 → T_sym, non-linear | the T1 after fnirt with the same outlines; hidden: the T1 mirrored left-right (mirror check); QC numbers in the terminal | cortex and ventricles on the outlines; the mirrored copy should overlap |
+| 9 | 4 · CBF and labels on T_sym | the CBF after one resampling, with the consensus region outlines | the input of `01_`, `02_` and `03_` (and of options 11–13) |
+| 10 | the chain as a PNG | columns: input T1, step 1, step 2, step 3, step 4; QC in the title; `visual_analysis/subject_views/<dataset>/<ID>_registration.png` | everything above at a glance |
 
 The registration scripts deleted the affine matrix and the warped T1. Steps 2–3 recompute them with the same FSL
 commands (`flirt` and `applywarp`; FSL must be on `PATH`) and cache them in `/tmp/asym_registration/<ID>/`. The first
 call per patient takes 25–45 s, later calls are instant. QC for D002: NCC with `T_sym` 0.79 and mirror Dice 0.956 on
 the 0.8-mm grid; the 2-mm QC file gives 0.819 and 0.960.
+
+#### Why step 1 is brain to brain, and what the rim at the brain edge is (audit 2026-11-18)
+
+Until 2026-11-18 step 1 ran `bet -f 0.3` on the PD reference and registered the result to the T1 brain with
+normalized mutual information. On a PD image the scalp fat is brighter than brain, so bet kept the whole head in every
+subject (the 20 000-voxel fallback never fired): the fit was head-to-brain. An audit of the 170 registered subjects
+(scanner-header geometry versus the saved matrix, scored in T1 space by the correlation of the CBF with the GIF cortex
+and by the ventricle / cortex CBF ratio) found the fit still better than the headers in 162 of 169 and worse in none
+(correlation 0.28 → 0.40, ventricle / cortex 0.56 → 0.36), but boundary-based registration on the GIF white matter
+(`flirt -cost bbr`, FSL's ASL → T1 method) improved every weak subject, by 8.7° in D042. Step 1 now keeps the whole-head
+normmi fit as the initialisation (`<ID>_asl2t1_init.mat`) and refines it with BBR; the refinement is accepted only when
+it stays within 15° and 8 mm of the initialisation and its CBF–cortex correlation is not lower (`chalfont_io.py
+step1pick`); the genuine refinements moved ≤ 9.7° / 4.8 mm, the one divergence (N052) 14 mm with the correlation
+halved, and it is now rejected. Over the 169 subjects with GIF, the correlation rose from 0.41 to 0.45 (median), by
+more than 0.02 in 86 and lower in none, and the median matrix moved 1.3° / 1.2 mm (`visual_analysis/registration_audit/step1_population.png`; deck slides 11–12). Weighting the
+normmi search by the projected T1 brain mask was tried and is unstable (D042 converged 60° off). `registration_qc.csv`
+carries `asl_t1_method`, `asl_t1_gm_corr` (flag `low_asl_t1_fit` below 0.20) and `asl_t1_vent_ratio`; the per-subject QC
+image shows the brain-masked CBF in the T1 instead of a PD contour. The pre-2026-11-18 matrices are kept in
+`external_chalfont/qc/asl2t1_v1/` and compared with the new ones in `qc/asl2t1_v1_vs_v2.csv`; re-run with
+`bash scripts/chalfont/run_registration.sh --redo-step1 -P 4` (ASL → T1 and the resampling only; the T1 warps stay).
+
+What looks like misalignment at the brain edge, the vertex and the cerebellum is mostly not registration. In their own
+space the eASL maps are zero outside the head and 7–20 ml/100 g/min outside the brain, but their 1.9 × 1.9 × 4 mm voxels
+lie 15–40° oblique to the T1, so trilinear resampling onto the 1-mm grid smears every slice across the brain edge and the
+ventricles; a perfectly aligned synthetic map resampled the same way gives a ventricle / cortex ratio of about 0.2, the
+measured maps 0.35 (median). The slab of 36–40 slices ends in a straight edge below the cerebellum and, in some subjects,
+at the vertex. The CBF on `T_sym` (step 4) is the rigid matrix and the T1 warp composed in one spline resampling;
+recomputing it as rigid-then-warp reproduces it to r = 0.995 (median difference 1 ml/100 g/min, interpolation only), and
+CBF ≥ 10 covers 95–98 % of both the warped subject brain and the template brain.
 
 #### Why step 2 differs between the cohorts
 
@@ -165,42 +239,58 @@ from there. Both chains end in a 12-dof affine, feed the identical fnirt (step 3
 Every FSLeyes view uses the same background: the symmetric template T1, with the patient's control-band mean CBF as
 a hidden layer. Signed maps are drawn red-yellow above zero and blue-lightblue below zero, starting at the stated
 threshold; anything weaker is transparent. Views marked "peak" open on the voxel with the largest |value| of their
-main layer. Options 9, 12, 17 and 18 open instead on the strongest clinical-tier cluster: the first row of the
-`06_clinical_interpretation` report, by |peak|, at its centroid on the side predicted for that cluster. The map peak
-is the fallback, and the terminal says which one was used. The patient-level call (option 15) weighs all clusters
-and can differ. For P016 the strongest cluster is left medial orbitofrontal (its side L), while the call is R
-(moderate).
+main layer. Options 11–13, 15, 17, 21, 24 and 25 open instead on the strongest clinical-tier cluster: the first row
+of the `06_clinical_interpretation` report, by |peak|, at its centroid on the side predicted for that cluster. The
+map peak is the fallback, and the terminal says which one was used. The patient-level call (option 18) weighs all
+clusters and can differ. For P016 the strongest cluster is left medial orbitofrontal (its side L), while the call is
+R (moderate).
 
 | # | View | Main layer and threshold on screen | Opens at | Chalfont |
 |---|---|---|---|---|
+| **Inputs** | | | | |
 | 1 | T1 + FreeSurfer parcellation, original space | `Dataset/<ID>/T1w_acpc_dc_restore` + `aparc+aseg` outlines | — | no (no native anatomy) |
 | 2 | CBF on the T1, original space | `<ID>_perfusion_calib_resampled_to_T1w`, hot 0–80 | — | no |
-| 3 | #3 perfusion z vs the control band | `<ID>_vs_<band>_zscore`, \|z\| ≥ 1.96 | — | yes |
-| 4 | #3 hypo / hyper clusters | `_hypo_clusters` (blue), `_hyper_clusters` (red); z beyond ±1.96, ≥ 10 voxels | — | yes |
-| 5 | option 4 + region outlines | same | — | yes |
-| 6 | #4 zAI map | `<ID>_asymmetry_zscore`, \|zAI\| ≥ 1.96; every finding appears twice (pair) | — | yes |
-| 7 | zAI sign masks | `_left_dominant` (red = voxel > mirror), `_right_dominant` (blue); not hemisphere-specific | — | yes |
-| 8 | significant zAI clusters | `<ID>_asymmetry_significant`, \|zAI\| ≥ 1.96, ≥ 50 voxels, both pair members | peak | yes |
-| 9 | clinical zAI | `<ID>_clinical_zai_significant_clusters`, gray matter, 37 pairs, \|zAI\| ≥ 3, ≥ 50 voxels, both members of each pair; hidden: the higher-member-only map and L>R / R>L masks | strongest clinical cluster | yes |
-| 10 | top-3 clusters (table + overlay) | clusters with peak \|zAI\| ≥ 4 from the clinical cluster report, yellow mask | peak of the 3 | yes |
-| 11 | 37-region view (table + overlay) | zAI inside the 37 region pairs, \|zAI\| ≥ 4; top-5 regions printed | peak | yes |
-| 12 | combined presurgical view (recommended) | zAI ≥ 1.96 (faded) + clinical zAI ≥ 3 (both members) + outlines; hidden: #3, mean CBF, side masks | strongest clinical cluster | yes |
-| 13 | file list | every file the views use, with sizes | — | yes |
-| 14 | FSLeyes commands | the commands of 3, 6, 8, 9, 12 and 17 for copy and paste | — | yes |
-| 15 | patient report | `06_clinical_interpretation`: clinical tier (peak \|zAI\| ≥ 4, ≥ 100 voxels), predicted side, lobe totals | — | yes |
-| 16 | island-cleaned zAI | `clean_overlay.py`: \|zAI\| ≥ 3, ≥ 50 voxels, 37 pairs, opening + closing; writes `<ID>_zai_cleaned.nii.gz` and a montage; says so when nothing survives (P016, D002) | peak | yes |
-| 17 | all layers in FSLeyes | template, atlas, CBF, #3, #4 and clinical zAI; only the template and clinical layers on | strongest clinical cluster | yes |
-| 18 | all layers as a PNG | as 17; `visual_analysis/subject_views/<dataset>/<ID>.png` | strongest clinical cluster | yes |
-| 19–25 | registration chain | template build, inputs, ASL → T1, affine, fnirt + mirror check + QC, CBF on `T_sym`, PNG (Example 6) | — | yes (21: Chalfont only) |
+| **Analysis #1** | | | | |
+| 3 | regional LI of the 37 pairs (Pipeline A) | LI = (L − R)/(L + R) painted on the parcellation, the right member with the opposite sign (blue = lower than its homologue), \|LI\| ≥ 0.01, saturating at 0.15; prints the ten largest pairs and the aggregation scores of `05_` (signed-weighted, temporal, mesial, mean, anatomically weighted, temporal-focused, dominant side). In-house: `results_analysis/<ID>/<ID>_comprehensive_asymmetry_analysis.csv` on `Dataset/<ID>/aparc+aseg`, original space | — | yes: template-atlas means, symmetric space |
+| **Registration** | | | | |
+| 4–10 | registration chain | template build, inputs, ASL → T1, affine, fnirt + mirror check + QC, CBF on `T_sym`, PNG (Example 6) | — | yes (6: Chalfont only) |
+| **Analyses #2 and #4** | | | | |
+| 11 | #2 voxel AI, patient alone | AI = 200 (v − v̄)/(v + v̄) from `02_compute_zai.compute_asymmetry_map` on the CBF on `T_sym`, inside a mirror-symmetric brain mask, \|AI\| ≥ 10 % (the thesis ROI cut-off), saturating at 100 %; prints the median \|AI\| in 37-pair gray matter and the AI at the opened voxel. Cached in `/tmp/asym_view/<ID>_<dataset>_voxel_ai.nii.gz` | strongest clinical cluster | yes |
+| 12 | control normative | the band's per-voxel SD of AI (`<results>/asymmetry/groups/<band>/sd_asymmetry`, hot 20–100 %); hidden: the mean AI and the SD of CBF (#3's normative); prints the median SD, the \|AI\| needed for \|zAI\| = 1.96 and the mean and SD at the opened voxel | strongest clinical cluster | yes |
+| 13 | #4 zAI map | `<ID>_asymmetry_zscore`, \|zAI\| ≥ 1.96; every finding appears twice (pair); prints the gray-matter calibration (% \|zAI\| ≥ 1.96) and (AI − mean)/SD at the opened voxel | strongest clinical cluster | yes |
+| **Thresholding** | | | | |
+| 14 | clusters at 1.96 (`02_`) | `<ID>_asymmetry_significant`, \|zAI\| ≥ 1.96, ≥ 50 voxels (18-connected), both pair members; hidden: the sign masks `_left_dominant` (voxel > mirror) / `_right_dominant`, not hemisphere-specific | peak | yes |
+| 15 | clinical maps (`03_`) | `<ID>_clinical_zai_significant_clusters`, gray matter, 37 pairs, \|zAI\| ≥ 3, ≥ 50 voxels, both members of each pair; hidden: the higher-member-only map and L>R / R>L masks | strongest clinical cluster | yes |
+| **Direction** | | | | |
+| 16 | #3 perfusion z vs the control band | `<ID>_vs_<band>_zscore`, \|z\| ≥ 1.96: the input of the direction rule | — | yes |
+| 17 | direction classes | each `02_` cluster pair drawn once, on the member in the predicted hemisphere (`cluster_hemi == ez_side_pred`): hypo blue, hyper red, mixed green, subtle yellow; hidden: the mirror members and #3 at \|z\| ≥ 2; prints pairs per class and side and the global #3 offset (median in 37-pair gray matter) | strongest clinical cluster | yes |
+| **Lateralization decision** | | | | |
+| 18 | patient report | `06_clinical_interpretation`: clinical tier (peak \|zAI\| ≥ 4, ≥ 100 voxels), predicted side, lobe totals | — | yes |
+| 19 | top-3 clusters (table + overlay) | clusters with peak \|zAI\| ≥ 4 from the clinical cluster report, yellow mask | peak of the 3 | yes |
+| 20 | 37-region view (table + overlay) | zAI inside the 37 region pairs, \|zAI\| ≥ 4; top-5 regions printed | peak | yes |
+| 21 | combined presurgical view (recommended) | zAI ≥ 1.96 (faded) + clinical zAI ≥ 3 (both members) + outlines; hidden: #3, mean CBF, side masks | strongest clinical cluster | yes |
+| **Post hoc** | | | | |
+| 22 | regional normative z_LI (enhanced estimator i) | z_LI = (LI − control mean)/control SD per pair (`scripts/v2/analyze_v2.py`), painted like option 3, \|z\| ≥ 1, saturating at 3; prints the mesial, temporal and all-37 means (equal to `ez_analysis_mdt/v2/<dataset>/R_patients.csv`) and the calibrated temporal call | — | yes |
+| 23 | #3 on its own: hypo / hyper clusters | `_hypo_clusters` (blue), `_hyper_clusters` (red), z beyond ±1.96, ≥ 10 voxels, region outlines on; prints the #3 rule (hypoperfused 37-pair gray-matter voxels at z ≤ −2, L vs R) from `ez_analysis_mdt/perfz/<dataset>/subjects.csv` | — | yes |
+| **Summary** | | | | |
+| 24 | all layers in FSLeyes | template, atlas, CBF, #3, #4 and clinical zAI; only the template and clinical layers on | strongest clinical cluster | yes |
+| 25 | all layers as a PNG | as 24; `visual_analysis/subject_views/<dataset>/<ID>.png` | strongest clinical cluster | yes |
+| **Misdetected cases (Results)** | | | | |
+| 26 | every method's misses in the cohort | prints each method's right / wrong / no call and writes the tables, figures, case panels and `REPORT.md` (section below) | — | yes |
+| 27 | this patient | the reference and the file it came from, each clinical source, each method's call (and whether its statistic is inside the controls' range), the primary rule's vote by direction class and the reasons it differs; opens the case panel PNG | — | yes |
+| **Display aid and utilities** | | | | |
+| 28 | island-cleaned zAI | `clean_overlay.py`: \|zAI\| ≥ 3, ≥ 50 voxels, 37 pairs, opening + closing; writes `<ID>_zai_cleaned.nii.gz` and a montage; says so when nothing survives (P016, D002). A display aid, not an analysis step | peak | yes |
+| 29 | file list | every file the views use, with sizes | — | yes |
+| 30 | FSLeyes commands | the commands of 13, 14, 15, 16, 21 and 24 for copy and paste | — | yes |
 
 Three thresholds appear, and they mean different things:
 - **1.96:** where the pipeline forms clusters (`02_`).
 - **3:** the voxel threshold of the clinical maps (`03_`).
-- **4:** the clinical tier, applied to a cluster's peak (`06_`, options 10 and 15).
+- **4:** the clinical tier, applied to a cluster's peak (`06_`, options 18 and 19).
 
 The menu labels say which one each view uses.
 
-### Layers of options 17 and 18
+### Layers of options 24 and 25
 
 | Layer (bottom → top) | File | FSLeyes start state | PNG row |
 |---|---|---|---|
@@ -220,10 +310,10 @@ skipped and listed. For example, Chalfont controls (`C…`) have no z-maps, so `
   - #3: red-yellow means CBF above the controls (hyper); blue means below (hypo).
   - #4 (zAI): red-yellow means the voxel is above its mirror voxel; blue means below.
 - **Mirrored pairs:** zAI is antisymmetric, so every zAI finding appears twice: red on the higher side, blue on the
-  mirror. The views keep both members visible. The crosshair of options 9, 12 and 17 marks the member the rule assigns
+  mirror. The views keep both members visible. The crosshair of options 15, 21 and 24 marks the member the rule assigns
   to the EZ side: the blue member of a hypoperfused cluster, the red member of a hyperperfused one.
 - **Higher side is not the predicted EZ side:** the rule decides the EZ side from which hemisphere deviates from the
-  controls (`direction_class`, `ez_side_pred`). Option 15 prints it.
+  controls (`direction_class`, `ez_side_pred`). Option 18 prints it; option 17 colours every pair by its class.
 - **Inside the brain only:** the #3 perfusion z map, its hypo/hyper cluster maps and the CBF are computed over the
   scanner field of view, which includes the scalp. The viewer shows them inside the brain only (the consensus
   parcellation), using masked copies cached in `/tmp/asym_view/`; the files on disk are unchanged. zAI and the
@@ -248,7 +338,8 @@ skipped and listed. For example, Chalfont controls (`C…`) have no z-maps, so `
 | `--at I J K` | open at this voxel instead of the peak |
 | `--all` | PNG for every patient of `--dataset` |
 | `--out DIR` | PNG folder (default `visual_analysis/subject_views`) |
-| `--registration` | with `--subject`: PNG of the registration chain (option 25); with `--all`: for every patient of `--dataset` |
+| `--registration` | with `--subject`: PNG of the registration chain (option 10); with `--all`: for every patient of `--dataset` |
+| `--misses` | misdetected cases: tables, figures and report for `--dataset` (both cohorts when not given); with `--subject`: that patient's summary and case panel |
 
 ## Without the viewer: files and tables
 
@@ -287,12 +378,84 @@ Figures regenerated from these tables:
 | `fsleyes is not on PATH` | FSL is not set up in this shell: `source $FSLDIR/etc/fslconf/fsl.sh`, or paste the printed command where FSLeyes exists. Use `--png` meanwhile. |
 | `FSLeyes exited with code N` + log lines | FSLeyes refused the command, for example because there is no display; the full log is `/tmp/fsleyes_<ID>.log`. Over SSH without X11 forwarding, use `--png`. |
 | `missing, layer skipped: <file>` | that output was never produced for this patient; the view opens without it. Re-run the pipeline step that writes it (`01_` for #3, `02_` for zAI, `03_` for clinical maps; add `--sym`, and `--dataset chalfont` for Chalfont). |
-| `(in-house only: no native anatomy)` on 1–2 | Chalfont has no `Dataset/<ID>/`; use 17 for the patient's CBF on the template. |
+| `(in-house only: no native anatomy)` on 1–2 | Chalfont has no `Dataset/<ID>/`; use 9 or 24 for the patient's CBF on the template. |
 | patient not in the list | the menu lists patients with a zAI map; Chalfont controls (`C…`) have none, so use `--subject C001`. |
 | stale or odd overlay after re-running the pipeline | masked copies refresh when the source file is newer; to force it, delete `/tmp/asym_view/`. |
-| `flirt (FSL) is not on PATH` (options 21–25) | steps 1–3 recompute intermediates with FSL: `source $FSLDIR/etc/fslconf/fsl.sh`. Cached results stay in `/tmp/asym_registration/<ID>/`; delete that folder to recompute. |
+| `flirt (FSL) is not on PATH` (options 6–10) | steps 1–3 recompute intermediates with FSL: `source $FSLDIR/etc/fslconf/fsl.sh`. Cached results stay in `/tmp/asym_registration/<ID>/`; delete that folder to recompute. |
+
+## Misdetected cases (options 26–27, `--misses`)
+
+```bash
+python interactive_viewer.py --misses                        # both cohorts: tables, figures, case panels, REPORT.md
+python interactive_viewer.py --misses --dataset inhouse      # one cohort (~10 s; Chalfont ~35 s)
+python interactive_viewer.py --misses --subject P027 --open  # one patient: summary in the terminal + case panel
+```
+
+For every patient: the reference side, the file it came from and how it was read; the side each clinical source
+pointed to; the call of every method; and, for each miss, why.
+
+- **Miss:** a method calls the other side (wrong) or no side (no call). Bilateral / unclear references are not scored
+  and are shown below the line; they get their own table, figure and report section (`bilateral_unclear.csv` / `.png`,
+  report section 9): every method's call, whether the blind methods agree, which sources point each way, and how large
+  each statistic is against the control range (a bilateral abnormality cancels in a left-minus-right statistic).
+- **Methods:** the blind ones (primary rule, regional LI, regional normative z and its calibrated call, the plain-Flow
+  variant, voxel mass, #3, thesis rule, hippocampal volume and its calibrated call, the sequential rule) and, in-house,
+  the thesis's own visual, ROI and voxel-wise readings. The thesis readings were reported beside the presumed EZ, so
+  they are shown for comparison and not counted among the methods.
+- **Control range:** for each method with leave-one-out controls, the 95th percentile of the controls' |statistic|
+  (the calibrated 5 % FP cut). A wrong call inside it is no stronger than what healthy controls produce: no signal.
+- **Primary-rule reasons:** the in-scope temporal + hippocampal + amygdalar volume assigned to each side by direction
+  class, the global CBF offset, the largest abnormal lobe, the EZ lobe, label strength, whether a clinical source or
+  most other methods point the other way.
+- **Label sources:**
+  - in-house: `ez_ground_truth.py` (thesis Table 11) plus `Dataset/reference_sources.csv`, which codes by hand the side
+    of each source (thesis Tables 11 and 14, manuscript Table 1) and the thesis readings (Tables 12-14). That file is
+    private: it holds invasive and follow-up findings not yet published.
+  - Chalfont: `external_chalfont/metadata/subjects.csv` (method and tier) and the sheet(s) behind each label, parsed from
+    `build_subjects.py`; source sides come from the anonymised MRI-negative-study sheet (semiology is not coded).
+
+| Output | What it shows |
+|---|---|
+| `matrix.png` | every method's call per patient (green right, red wrong, grey no call), hardest patients first |
+| `control_range.png` | each statistic / control 95th percentile, signed toward the reference side; grey band = controls |
+| `rule_vote.png` | what the primary rule voted on, by direction class |
+| `offset.png` | hyper share of cluster pairs against the global CBF offset |
+| `sources.png` | each clinical source, the reference, each method (and the thesis readings in-house) |
+| `strata.png` | share right by label strength, label reading, lesion and EZ lobe, with Wilson intervals |
+| `agreement.png` | how often two methods call the same side; how many methods get each patient right |
+| `bilateral_unclear.png` | the patients without a reference side: sources, reference and every method's call; each statistic against the control range beside the unilateral patients |
+| `cases/<ID>.png` | one patient: clusters by class through the deciding cluster, the vote, sources, methods, reasons |
+| `REPORT.md` | all of the above with the tables, one line per primary-rule miss and one paragraph per bilateral / unclear patient |
+| `ez_analysis_mdt/misdetected/<dataset>/*.csv` | `cases`, `method_summary`, `rule_miss_reasons`, `strata`, `method_agreement`, `label_sources`, `bilateral_unclear` |
+
+## Reorder 2026-11-09: the menu follows the Methods
+
+The menu used to run anatomy → #3 → #4 → utilities → all layers → registration. Registration came last although
+every symmetric-space map depends on it, #3 came before the zAI it serves, and analyses #1 and #2 had no view. Now
+the order is that of the Methods (table above), the numbers come from `MENU`, and four views were added or merged:
+
+| Old | New | Change |
+|---|---|---|
+| 1, 2 | 1, 2 | — |
+| — | 3 | new: analysis #1, regional LI of the 37 pairs + the `05_` aggregation scores |
+| 19–25 | 4–10 | moved up: registration precedes every symmetric-space map |
+| — | 11 | new: analysis #2, the voxel AI of the patient alone (`02_` computes it but does not save it) |
+| — | 12 | new: the control normative (mean and SD of AI) behind zAI |
+| 6 | 13 | + calibration and the one-voxel arithmetic; opens on the clinical cluster |
+| 8 (+ 7) | 14 | the sign masks of old 7 are hidden layers here |
+| 9 | 15 | — |
+| 3 | 16 | moved to the direction step it feeds |
+| — | 17 | new: clusters coloured by direction class, one member per pair |
+| 15, 10, 11, 12 | 18, 19, 20, 21 | — |
+| — | 22 | new: regional normative z_LI (post hoc enhanced estimator i) |
+| 4 (+ 5) | 23 | region outlines on (old 5 was old 4 with outlines); prints the post hoc #3 rule |
+| 17, 18 | 24, 25 | — |
+| — | 26, 27 | new (later the same day): misdetected cases, below |
+| 16, 13, 14 | 28, 29, 30 | island cleaning is a display aid, not a Methods step |
 
 ## Audit 2026-11-09: what changed and why
+
+Option numbers in this section are those of the menu at the time of the audit (before the reorder above).
 
 Every option was run for P016, P016 with `--orig`, D002 and N015. A logging stand-in for `fsleyes` captured each
 command, every file it named was checked, and each view was rendered offscreen with the real FSLeyes. Findings and
@@ -347,11 +510,11 @@ fixes:
 - **Working directory:** the menu only worked when started from the project root. It now changes there itself.
 - **Patient prompt:** it now accepts IDs as well as list numbers.
 
-Tests: sections f and g of `tests/test_regressions.py` (all-layer view, launcher commands, thresholds, reference line).
+Tests: sections f–i of `tests/test_regressions.py` (all-layer view, launcher commands, thresholds, reference line, registration views, menu order, voxel AI, regional painting, direction classes, regional normative z).
 
 ## Limitations
 
-- FSLeyes needs a desktop session (X11 or Wayland). `--png` and option 18 need no display.
+- FSLeyes needs a desktop session (X11 or Wayland). `--png` and options 10 and 25 need no display.
 - Colormap names (`red-yellow`, `blue-lightblue`, `hot`, `freesurfercolorlut`) are FSLeyes-specific.
 - Options 1–2 and `--orig` exist for the in-house cohort only.
 - Chalfont region outlines come from one fixed template atlas, not individual anatomy.
@@ -359,5 +522,5 @@ Tests: sections f and g of `tests/test_regressions.py` (all-layer view, launcher
 ## Cross-references
 
 - Outputs shown: `results_zscore/{patients,asymmetry/patients,clinical}/` and the same under `external_chalfont/results_zscore/`.
-- Pipeline steps: `01_build_control_normative.py` (#3), `02_compute_zai.py` (#4), `03_clinical_maps.py` (clinical maps), `06_clinical_interpretation.py` (report), `clean_overlay.py` (option 16).
+- Pipeline steps: `05_roi_discrimination.py` and `scripts/build_comprehensive_asymmetry.py` (#1, option 3), `01_build_control_normative.py` (#3), `02_compute_zai.py` (#2 and #4: `compute_asymmetry_map`, the control normative, clusters, direction classes), `symreg/check_full_calibration.py` (calibration, option 13), `03_clinical_maps.py` (clinical maps), `06_clinical_interpretation.py` (report), `scripts/v2/analyze_v2.py` (option 22), `scripts/audit/perfusion_z_lateralization.py` (#3 rule, option 23), `clean_overlay.py` (option 28).
 - Dataset switch: `dataset_config.py`. Install notes for FSLeyes: [`install.md`](install.md).

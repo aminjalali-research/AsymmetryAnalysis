@@ -89,7 +89,7 @@ The four aggregation strategies that turn 40 ROI laterality measurements into a 
 
 ### From QUICK_LI_REFERENCE.md (consolidated 2026-05-05)
 
-Cheat sheet for the legacy ROI-based LI maps in `laterality_maps/{patient}_*.nii.gz`. Most users now invoke these views via `interactive_viewer.py` options 11–17, but the raw FSLeyes commands below are still useful for ad-hoc inspection or remote-machine sessions.
+Cheat sheet for the legacy ROI-based LI maps in `laterality_maps/{patient}_*.nii.gz`. The current `interactive_viewer.py` does not show these legacy maps (its option 3 paints the regional LI of Pipeline A on the parcellation); use the raw FSLeyes commands below.
 
 #### Essential FSLeyes commands
 
@@ -165,7 +165,7 @@ Use **NearestNeighbor** (ANTs `-n NearestNeighbor` or FSL `--interp=nn`) to pres
 
 ```bash
 python voxel_roi_extraction.py
-python interactive_viewer.py    # then select patient, choose option 9
+# results_voxel_roi/ is a legacy output: open it with the FSLeyes commands above (the current viewer does not show it)
 ```
 
 Outputs:
@@ -230,8 +230,6 @@ Regenerate with custom settings:
 # Edit PERCENTILE_THRESHOLD / DISPLAY_MIN_CLUSTER at the top of show_voxel_results.py, then:
 python -c "from show_voxel_results import run_all_thresholded_generation; run_all_thresholded_generation()"
 ```
-
-Or use the percentile slider in the interactive viewer (option 7).
 
 #### Cluster-thresholded hyper/hypoperfusion (Section 4 of show_voxel_results.py)
 

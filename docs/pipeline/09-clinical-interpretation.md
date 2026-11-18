@@ -215,7 +215,7 @@ Stricter thresholds (e.g. `--peak-threshold 5.0`) push borderline cases
 - Manuscript section: §3 Pipeline B clinical interpretation
 - Upstream step that produces the cluster report: [03-compute-zai.md](03-compute-zai.md)
 - Sister surgeon-facing visualization: [08-interactive-viewer.md](08-interactive-viewer.md)
-  (option 15 wraps this script)
+  (option 18 wraps this script)
 - Audit doc: `docs/superpowers/audits/2026-05-05-clinical-interpretation-tool.md`
 - 37-ROI scope policy: `CLAUDE.md` ("34 Cortical + 6 Subcortical Paired
   Regions") and `docs/superpowers/audits/2026-05-05-viewer-clinical-fixes.md`

@@ -49,7 +49,7 @@ Typical runtime: ~30 seconds per patient.
 
 - Backs the per-patient lateralized panels in Figure 13/14
 - Provides the cluster reports cited in §3 Pipeline B results
-- Outputs are what `interactive_viewer.py` options 18–20 display
+- Outputs are what `interactive_viewer.py` options 15 (clinical maps), 19–21 and 24–25 display
 
 ## Dependencies
 
