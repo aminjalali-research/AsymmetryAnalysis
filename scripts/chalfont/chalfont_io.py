@@ -214,8 +214,95 @@ def asl_t1_gm_corr(mat, staged_dir) -> float:
     return float(np.corrcoef(outs["tcflow"][inb], (parc[inb] >= 100).astype(float))[0, 1])
 
 
+def _rigid_about(centre, rx=0.0, ry=0.0, rz=0.0, tx=0.0, ty=0.0, tz=0.0) -> np.ndarray:
+    """Rigid transform (degrees, mm) about `centre` in the moving image's scaled-voxel space (FSL convention)."""
+    def rot(axis, deg):
+        a = np.radians(deg); c, s = np.cos(a), np.sin(a); R = np.eye(4)
+        i, j = [(1, 2), (0, 2), (0, 1)][axis]
+        R[i, i] = c; R[j, j] = c; R[i, j] = -s; R[j, i] = s
+        return R
+    T = np.eye(4); T[:3, 3] = centre; Ti = np.eye(4); Ti[:3, 3] = -centre
+    P = np.eye(4); P[:3, 3] = (tx, ty, tz)
+    return P @ T @ rot(0, rx) @ rot(1, ry) @ rot(2, rz) @ Ti
+
+
+def asl_grid_corr(M: np.ndarray, staged_dir, workdir) -> float:
+    """Step-1 fit score on the ASL grid (cheap, one flirt call): the T1 cortex indicator and brain mask are carried
+    into ASL space with the inverse of M; correlation of the native TC-Flow CBF with the cortex indicator inside the
+    projected brain. `workdir` must hold ctx_brain.nii.gz (4D: cortex indicator, brain) made by step1polish."""
+    import os
+    import subprocess
+    st, wd = Path(staged_dir), Path(workdir)
+    np.savetxt(wd / "inv.mat", np.linalg.inv(M), fmt="%.8f")
+    subprocess.run(["flirt", "-in", str(wd / "ctx_brain.nii.gz"), "-ref", str(st / "asl_ref.nii.gz"), "-applyxfm",
+                    "-init", str(wd / "inv.mat"), "-interp", "trilinear", "-out", str(wd / "proj.nii.gz")],
+                   check=True, capture_output=True, env={**os.environ, "FSLOUTPUTTYPE": "NIFTI_GZ"})
+    proj = np.asanyarray(nib.load(str(wd / "proj.nii.gz")).dataobj).astype(np.float32)
+    cbf = np.asanyarray(nib.load(str(st / "tcflow.nii.gz")).dataobj).astype(np.float32)
+    m = (proj[..., 1] > 0.5) & (cbf > 0)
+    return float(np.corrcoef(cbf[m], proj[..., 0][m])[0, 1]) if m.sum() > 500 else float("nan")
+
+
+def step1polish(mat, staged_dir, max_deg=3.0, max_mm=3.0, steps=((1.0, 1.0), (0.5, 0.5), (0.25, 0.25)), min_gain=0.005):
+    """Coordinate descent of the six rigid parameters (about the ASL volume centre) that maximises asl_grid_corr,
+    bounded to +-max_deg / +-max_mm from the input matrix. Returns (M_best, gain, c0, c1, n_evaluations); the
+    input matrix is returned unchanged when the gain is below min_gain or there is no GIF parcellation."""
+    import tempfile
+    st = Path(staged_dir)
+    M0 = np.loadtxt(mat)
+    if not (st / "gif_parc.nii.gz").exists():
+        return M0, 0.0, float("nan"), float("nan"), 0
+    asl = nib.load(str(st / "asl_ref.nii.gz"))
+    centre = np.array(asl.shape[:3]) * np.array(asl.header.get_zooms()[:3]) / 2
+    with tempfile.TemporaryDirectory(prefix="polish_") as td:
+        wd = Path(td)
+        parc = nib.load(str(st / "gif_parc.nii.gz")); p = np.asanyarray(parc.dataobj)
+        nib.save(nib.Nifti1Image(np.stack([(p >= 100), (p > 0)], -1).astype(np.float32), parc.affine), str(wd / "ctx_brain.nii.gz"))
+        x = np.zeros(6); n = 0
+        best = c0 = asl_grid_corr(M0, st, wd); n += 1
+        for sd, sm in steps:
+            improved = True
+            while improved:
+                improved = False
+                for k in range(6):
+                    for sgn in (+1, -1):
+                        y = x.copy(); y[k] += sgn * (sd if k < 3 else sm)
+                        if np.any(np.abs(y[:3]) > max_deg + 1e-9) or np.any(np.abs(y[3:]) > max_mm + 1e-9):
+                            continue
+                        c = asl_grid_corr(M0 @ _rigid_about(centre, *y), st, wd); n += 1
+                        if c > best + 1e-6:
+                            best, x, improved = c, y, True
+        M1 = M0 @ _rigid_about(centre, *x)
+    gain = best - c0
+    return (M1 if gain >= min_gain else M0), gain, c0, best, n
+
+
 if __name__ == "__main__":
     # CLI: chalfont_io.py resample2mm <in.nii.gz> <out.nii.gz> [order]
+    #      chalfont_io.py step1polish <asl2t1.mat> <staged dir> <max_deg> <max_mm>
+    #          coordinate descent of the rigid fit on the ASL-grid CBF-cortex correlation; overwrites the matrix when
+    #          the gain is >= 0.005 (the original is kept as <mat>.prepolish). Prints the scores and the move.
+    if len(sys.argv) == 6 and sys.argv[1] == "step1polish":
+        mat, st, max_deg, max_mm = sys.argv[2], sys.argv[3], float(sys.argv[4]), float(sys.argv[5])
+        M1, gain, c0, c1, n = step1polish(mat, st, max_deg, max_mm)
+        if gain >= 0.005:
+            # independent check in T1 space (the step1pick metric): the polished matrix must not score lower there
+            cand = mat + ".candidate"
+            np.savetxt(cand, M1, fmt="%.10f")
+            t0, t1 = asl_t1_gm_corr(mat, st), asl_t1_gm_corr(cand, st)
+            rot, mm = rigid_gap(mat, cand, Path(st) / "asl_ref.nii.gz")
+            if np.isnan(t0) or np.isnan(t1) or t1 >= t0:
+                Path(mat + ".prepolish").write_text(Path(mat).read_text())
+                Path(cand).replace(mat)
+                print(f"step1polish: ASL-grid correlation {c0:.4f} -> {c1:.4f} (+{gain:.4f}), T1-space {t0:.4f} -> {t1:.4f}, "
+                      f"moved {rot:.2f} deg / {mm:.2f} mm, {n} evaluations; matrix updated")
+            else:
+                Path(cand).unlink()
+                print(f"step1polish: ASL-grid correlation {c0:.4f} -> {c1:.4f} (+{gain:.4f}) but T1-space {t0:.4f} -> {t1:.4f}; "
+                      f"matrix kept")
+        else:
+            print(f"step1polish: ASL-grid correlation {c0:.4f}, best nudge +{gain:.4f} < 0.005, {n} evaluations; matrix kept")
+        sys.exit(0)
     #      chalfont_io.py rigidgap <a.mat> <b.mat> <moving.nii.gz> <max_deg> <max_mm>  (exit 1 when exceeded)
     #      chalfont_io.py step1pick <init.mat> <bbr.mat> <staged dir> <max_deg> <max_mm>
     #          exit 0 = accept the BBR refinement: within the limits AND its CBF-cortex correlation is not lower than

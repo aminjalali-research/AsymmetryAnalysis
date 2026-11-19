@@ -574,6 +574,7 @@ def test_chalfont_step1_is_brain_to_brain():
     joined = " ".join(ln.strip() for ln in cmds)
     assert 'chalfont_io.py" step1pick' in joined and '"$ST" 15 8' in joined   # guard: 15 deg / 8 mm + fit not worse
     assert "_asl2t1_init.mat" in s and 'MODE="${2:-full}"' in s          # provenance + step1-only re-run
+    assert 'chalfont_io.py" step1polish' in joined and '"$ST" 3 3' in joined   # bounded polish of the chosen matrix
     import importlib.util
     spec = importlib.util.spec_from_file_location("cio", ROOT / "scripts/chalfont/chalfont_io.py")
     cio = importlib.util.module_from_spec(spec)
@@ -591,6 +592,12 @@ def test_chalfont_step1_is_brain_to_brain():
         assert abs(rot - 10.0) < 1e-6
         centre = np.array([120.0, 120.0, 80.0, 1.0])                      # dims x pixdims / 2
         assert abs(mm - np.linalg.norm(((b - a) @ centre)[:3])) < 1e-6
+    # the polish perturbs about the ASL centre: a pure rotation leaves the centre where it is, a translation moves it
+    c = np.array([120.0, 120.0, 80.0])
+    R = cio._rigid_about(c, rx=3.0)
+    assert np.allclose((R @ np.r_[c, 1.0])[:3], c) and abs(np.degrees(np.arccos((np.trace(R[:3, :3]) - 1) / 2)) - 3.0) < 1e-9
+    T = cio._rigid_about(c, tz=1.0)
+    assert np.allclose((T @ np.r_[c, 1.0])[:3], c + [0, 0, 1.0])
 
 
 def test_per_index_table_ranked_by_the_weaker_side():
