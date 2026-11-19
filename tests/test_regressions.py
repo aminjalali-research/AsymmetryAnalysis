@@ -508,11 +508,11 @@ _HAVE_MISS_INPUTS = all((Path(__file__).resolve().parents[1] / f).exists() for f
 def test_miss_analysis_reproduces_published_counts(monkeypatch):
     import interactive_viewer as iv
     monkeypatch.chdir(iv.BASE_DIR)
-    # Chalfont counts = the outputs on disk after the 2026-11-18 ASL -> T1 re-run (manuscript and deck slides 35-62 still
+    # Chalfont counts = the outputs on disk after the 2026-11-18/19 ASL -> T1 re-estimation (BBR + polish) (manuscript and deck slides 35-62 still
     # quote the old-matrix values: rule 58, regional_z 61, regional_z_flow 65, voxel_mass 59, perfz 59, thesis 26,
     # sequential 68; see CLAUDE.md, Chalfont step 1).
     published = {"inhouse": dict(rule=7, regional_li=9, regional_z=8, voxel_mass=8, perfz=6),
-                 "chalfont": dict(rule=49, regional_z=60, regional_z_flow=64, voxel_mass=57, perfz=55, thesis=29,
+                 "chalfont": dict(rule=51, regional_z=61, regional_z_flow=63, voxel_mass=59, perfz=55, thesis=30,
                                   hipp_volume=62, sequential=67)}
     for ds, counts in published.items():
         ma = iv.MissAnalysis(ds)
@@ -520,10 +520,10 @@ def test_miss_analysis_reproduces_published_counts(monkeypatch):
         assert len(u) == (13 if ds == "inhouse" else 93)
         for m, k in counts.items():
             assert int((u[f"{m}_ok"] == 1).sum()) == k, (ds, m)
-    # Chalfont: nearly every wrong-side call of the rule lies inside the leave-one-out controls' range (30/30 before the
-    # re-run, 37/39 after it); regional z beyond the range: 12 right, 2 wrong (1 before)
+    # Chalfont: nearly every wrong-side call of the rule lies inside the leave-one-out controls' range (30/30 with the
+    # old matrices, 39/40 now); regional z beyond the range: 12 right, 2 wrong (1 before)
     ms = ma.method_summary().set_index("method")
-    assert ms.loc["rule", "wrong"] == 39 and ms.loc["rule", "within_wrong"] == 37
+    assert ms.loc["rule", "wrong"] == 40 and ms.loc["rule", "within_wrong"] == 39
     assert ms.loc["regional_z", "beyond_right"] == 12 and ms.loc["regional_z", "beyond_wrong"] == 2
 
 
