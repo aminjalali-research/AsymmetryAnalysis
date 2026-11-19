@@ -29,8 +29,9 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   - Voxel-wise primary rule (clinical tier): 7/13 agree (P013, P016, P017, P023, P024, P026, P029), balanced
     accuracy 0.55; no rule >8/13 or balanced accuracy >0.61; always-left 8/13, 0.50. Peak zAI 5.9–9.2 (no clipping).
   - Direction class tracks the global CBF offset vs the HCP band (ρ≈0.87): hyper-dominant P015/P029/P030 = artefact.
-  - Chalfont (93 unilateral, 66 same-scanner controls): primary rule 58/93 (0.63) but 56 % of LOO controls get a
+  - Chalfont (93 unilateral, 66 same-scanner controls), old ASL->T1 matrices (manuscript/deck): primary rule 58/93 (0.63) but 56 % of LOO controls get a
     strong/moderate call; regional normative temporal z 61/93 (0.65, AUC 0.69), calibrated calls 12/13 at 6 % FP.
+    After the 2026-11-18 step-1 re-run: rule 49/93 (0.53), 67 % of controls called; regional z 60/93, cal. 12/14 (see the step-1 entry).
   - Voxel noise budget: control SD of AI 55–70 % at 0.8 mm → |zAI|=4 needs >200 % asymmetry (docs/audit/).
   - Protocol check (2026-11-03, Winston note: #1 region LI, #2 voxel AI, #3 CBF z vs controls, #4 z of AI): all four exist; #3 was only
     used for the direction class until `scripts/audit/perfusion_z_lateralization.py` (→ `ez_analysis_mdt/perfz/`). #3 hypo-volume side:
@@ -105,7 +106,7 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   (private `Dataset/reference_sources_quotes.csv`, `verify_inhouse_sources()`, test), 17/17 tiers match manuscript
   Table 1; user decision 2026-11-09: tentative findings ('?') count as weak support for that side. The thesis's readings were graded beside the presumed EZ (blinding not stated): visual 9/13, ROI
   9/13, voxel 7/13 vs blind 5-9/13; they miss P017 and P027 like our regional methods. P023's regional LI score equals
-  the fitted 05_ cut (called R only by strict inequality). Deck slides 49-56 (62 slides; 56 = bilateral / unclear patients); supplement S14
+  the fitted 05_ cut (called R only by strict inequality). Deck slides 50-57 (63 slides; 57 = bilateral / unclear patients); supplement S14
   (`sec:misdetected`, tab:misdetected_inhouse / _external, figS_misdetected_*), 39 pages.
   **Bilateral / unclear patients, kept apart (2026-11-18, user goal):** `MissAnalysis.bilateral_unclear()` ->
   `bilateral_unclear.csv` / `.png`, REPORT section 9 (never scored; manuscript untouched by design). In-house P018 /
@@ -127,8 +128,7 @@ whether it lateralizes the epileptogenic zone (EZ) and whether each abnormality 
   outside the head natively; synthetic perfect alignment gives vent/cortex ~0.2 vs 0.35 measured); step 4 composition
   verified (rigid-then-warp r = 0.995). Viewer option 6 now shows spline CBF masked to the T1 brain + 2 mm, with native
   voxels, PD and mask as hidden layers, cached per matrix mtime. Old matrices: `external_chalfont/qc/asl2t1_v1/`;
-  comparison `qc/asl2t1_v1_vs_v2.csv`; deck slides 11-12 (62 slides). **Downstream Chalfont outputs (results_zscore*, v2, audits, numbers in the
-  manuscript/deck) are from the old matrices until the pipeline is re-run.**
+  comparison `qc/asl2t1_v1_vs_v2.csv`; deck slides 11-13 (63 slides). Re-run of the whole Chalfont chain on the new matrices (2026-11-18 evening, `run_chalfont_pipeline.sh both all` under run_capped 48G, then v2 features rebuilt from scratch -- `prep_subject_features.py` skips existing npz, so the stale `v2_features/chalfont*` had to be deleted first and the base pass run before `--tissue` -- analysis #3, FIRST prior, audits, misdetected report): pre-specified voxel rule 58/93 (0.62) -> **49/93 (0.53, below the 0.54 baseline)**, Strong/Moderate/Weak 18/21, 18/39, 13/28, LOO controls with a Strong/Moderate call 37/66 -> **44/66 (67 %)**; 19 of 93 calls flipped, most near-ties, median hemispheric cluster-volume asymmetry 0.68 -> 0.55 log units (part of the old asymmetry was registration). Flow-map rule 56/93 (0.60), controls 42/66. Regional z temporal sign 61 -> 60/93 (cal. 12/14), Flow 65 -> 64/93 (cal. 14/16), nested LOO 54/93 TC / 64/93 Flow; voxel mass 59 -> 57/93; #3 hypo-voxels 59 -> 55/93 (temporal sign 58/93 unchanged); FIRST volume AI unchanged 62/93, sequential 68 -> 67/93; best balanced point 0.41-0.52. Old-matrix headline tables are snapshotted only in the session scratchpad. **The manuscript and deck slides 35-62 still quote the old-matrix numbers** (deck slide 13 = before/after table).
 - **Table S2 ranking (2026-11-18, user goal):** `scripts/per_index_discrimination.py` ranks the 15 indices by
   min(sensitivity, specificity) (sens = left called left /8, spec = right called right /5), ties by balanced
   accuracy then AUC; columns `min_sens_spec`, `balanced_accuracy`, `left_correct`, `right_correct`. Glass's delta /

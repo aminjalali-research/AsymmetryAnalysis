@@ -50,7 +50,7 @@ there, so a reorder renumbers everything at once (test `test_menu_follows_method
 | 18–21 | Lateralization decision: report, top-3, 37 regions, combined | Lateralization decision and clinical scope | 31 representative cases · 46 what the clinician should read |
 | 22–23 | Post hoc: regional normative z_LI, #3 on its own | Enhanced estimators; Direct perfusion z-score | 34–35 regional normative estimator · 36–37 method #3 |
 | 24–25 | All layers of one subject | (summary view) | 14 #3 next to #4, same slice |
-| 26–27 | Misdetected cases: every method against the reference, and why | Supplementary S14 (Results) | 49–56 misdetected cases |
+| 26–27 | Misdetected cases: every method against the reference, and why | Supplementary S14 (Results) | 50–57 misdetected cases |
 | 28–30 | Display aid and utilities | — | — |
 
 Where the deck differs: it shows Pipeline A (slide 27) after thresholding and the #3/#4 side-by-side (slide 14)
@@ -200,7 +200,7 @@ normmi fit as the initialisation (`<ID>_asl2t1_init.mat`) and refines it with BB
 it stays within 15° and 8 mm of the initialisation and its CBF–cortex correlation is not lower (`chalfont_io.py
 step1pick`); the genuine refinements moved ≤ 9.7° / 4.8 mm, the one divergence (N052) 14 mm with the correlation
 halved, and it is now rejected. Over the 169 subjects with GIF, the correlation rose from 0.41 to 0.45 (median), by
-more than 0.02 in 86 and lower in none, and the median matrix moved 1.3° / 1.2 mm (`visual_analysis/registration_audit/step1_population.png`; deck slides 11–12). Weighting the
+more than 0.02 in 86 and lower in none, and the median matrix moved 1.3° / 1.2 mm (`visual_analysis/registration_audit/step1_population.png`; deck slides 11–13). Weighting the
 normmi search by the projected T1 brain mask was tried and is unstable (D042 converged 60° off). `registration_qc.csv`
 carries `asl_t1_method`, `asl_t1_gm_corr` (flag `low_asl_t1_fit` below 0.20) and `asl_t1_vent_ratio`; the per-subject QC
 image shows the brain-masked CBF in the T1 instead of a PD contour. The pre-2026-11-18 matrices are kept in
@@ -216,6 +216,8 @@ at the vertex. The CBF on `T_sym` (step 4) is the rigid matrix and the T1 warp c
 recomputing it as rigid-then-warp reproduces it to r = 0.995 (median difference 1 ml/100 g/min, interpolation only), and
 CBF ≥ 10 covers 95–98 % of both the warped subject brain and the template brain.
 
+
+**Re-run on the new matrices (2026-11-18 evening).** Pipeline B for both CBF maps, the v2 estimators (features rebuilt: `prep_subject_features.py` skips subjects whose `.npz` exists, so `v2_features/chalfont*` was deleted and the base pass run before `--tissue`), analysis #3, the FIRST prior, the operating-point audits and the misdetected report were re-run. The pre-specified voxel rule fell from 58/93 to 49/93 (balanced accuracy 0.53, below the 0.54 baseline) with 44 of 66 leave-one-out controls receiving a Strong or Moderate call (37 before); 19 of 93 calls flipped, most of them near-ties in cluster volume, and the median hemispheric cluster-volume asymmetry fell from 0.68 to 0.55 log units. Region-mean statistics barely moved (regional temporal z 60/93 vs 61/93, calibrated 12/14; Flow 64/93, 14/16; #3 temporal sign 58/93 unchanged; hypo-voxel #3 55/93 vs 59/93; sequential FIRST -> Flow 67/93 vs 68/93). Deck slide 13 carries the before/after table; the manuscript and deck slides 35-62 still quote the old-matrix numbers.
 #### Why step 2 differs between the cohorts
 
 In-house T1s run `flirt 12 dof -nosearch`; Chalfont T1s run `flirt 6 dof` (full search) and then `flirt 12 dof -init
