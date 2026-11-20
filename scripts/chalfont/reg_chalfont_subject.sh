@@ -72,11 +72,9 @@ else
   cp "$OUT/${ID}_asl2t1_init.mat" "$OUT/${ID}_asl2t1.mat"
   log "asl2t1: no GIF parcellation, normmi fit kept"
 fi
-#    Polish (2026-11-18 evening): coordinate descent of the six rigid parameters on the ASL-grid CBF-cortex
-#    correlation, bounded to +-3 deg / +-3 mm; the matrix is replaced only when the gain is >= 0.005 (the previous
-#    matrix is kept as <ID>_asl2t1.mat.prepolish). Audit of the 2026-11-18 matrices: see external_chalfont/qc/asl2t1_optimum.csv.
-polish_msg=$(python "$HERE/chalfont_io.py" step1polish "$OUT/${ID}_asl2t1.mat" "$ST" 3 3)
-log "$polish_msg"
+#    No further polish: a coordinate descent on the CBF-cortex correlation (chalfont_io.py step1polish) was tried on
+#    2026-11-19 and rejected because it made independent checks worse (CBF outside the brain worse in 42/80, in the
+#    ventricles worse in 61/80; external_chalfont/qc/asl2t1_polish_independent_check.csv). BBR passes the same checks.
 
 if [ "$MODE" = "step1" ]; then
   [ -f "$OUT/${ID}_warp.nii.gz" ] || { echo "ERROR $ID: step1 mode needs the existing warp" >&2; exit 1; }

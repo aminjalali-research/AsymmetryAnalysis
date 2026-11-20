@@ -244,7 +244,10 @@ def asl_grid_corr(M: np.ndarray, staged_dir, workdir) -> float:
 
 
 def step1polish(mat, staged_dir, max_deg=3.0, max_mm=3.0, steps=((1.0, 1.0), (0.5, 0.5), (0.25, 0.25)), min_gain=0.005):
-    """Coordinate descent of the six rigid parameters (about the ASL volume centre) that maximises asl_grid_corr,
+    """AUDIT ONLY, NOT USED BY THE PIPELINE (rejected 2026-11-19: it raises its own CBF-cortex objective but makes the
+    independent checks worse -- CBF outside the brain worse in 42/80 polished subjects, in the ventricles in 61/80;
+    external_chalfont/qc/asl2t1_polish_independent_check.csv).
+    Coordinate descent of the six rigid parameters (about the ASL volume centre) that maximises asl_grid_corr,
     bounded to +-max_deg / +-max_mm from the input matrix. Returns (M_best, gain, c0, c1, n_evaluations); the
     input matrix is returned unchanged when the gain is below min_gain or there is no GIF parcellation."""
     import tempfile
@@ -279,7 +282,7 @@ def step1polish(mat, staged_dir, max_deg=3.0, max_mm=3.0, steps=((1.0, 1.0), (0.
 
 if __name__ == "__main__":
     # CLI: chalfont_io.py resample2mm <in.nii.gz> <out.nii.gz> [order]
-    #      chalfont_io.py step1polish <asl2t1.mat> <staged dir> <max_deg> <max_mm>
+    #      chalfont_io.py step1polish <asl2t1.mat> <staged dir> <max_deg> <max_mm>   (audit only; rejected, see step1polish)
     #          coordinate descent of the rigid fit on the ASL-grid CBF-cortex correlation; overwrites the matrix when
     #          the gain is >= 0.005 (the original is kept as <mat>.prepolish). Prints the scores and the move.
     if len(sys.argv) == 6 and sys.argv[1] == "step1polish":
